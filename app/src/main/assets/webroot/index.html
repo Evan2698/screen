@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>TESLA Screen Projection</title>
+    <link rel="icon" type="icon" sizes="192x192" href="img/favicon-192x192.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="96x96" href="img/favicon-96x96.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+    <link rel="stylesheet" href="css/main.css" />
+</head>
+
+
+<body class="root vertical-container">
+
+    <div class="inline-root vertical-container" id="01">
+        <div class="item title">
+            SCREEN TO TΞSLA
+        </div>
+    </div>
+
+    <div class="inline-root container" id="02">
+        <button id="join" class="button">投屏</button>
+        <div class="separator"></div>
+        <button id="fullscreen" class="button">全屏</button>
+    </div>
+
+    <div class="inline-root container  container-margin">
+        <img class="item action-button" src="img/home.svg" id="home" />
+        <!-- <img class="item image-screen" src="img/demo.jpg">-->
+        <canvas class="item image-screen"  id="screen"></canvas>
+        <img class="item action-button" src="img/back.svg" id="back" />
+    </div>
+
+    <script src="js/socket.js"></script>
+    <script src="js/main.js"></script>
+
+</body>
+
+</html>
