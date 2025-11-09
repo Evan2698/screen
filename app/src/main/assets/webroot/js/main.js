@@ -1,264 +1,238 @@
+/**
+ * @file main.js
+ * @description Main application logic for screen mirroring.
+ * Refactored into modular classes: AppController for main logic and TouchController for input handling.
+ */
 
-let mirrorButton;
-let fullButton;
-let streamCanvas;
-let imageWebsocket = null;
-let urlCreator = window.URL || window.webkitURL;
-let imageQueue = [];
-let freshHandle;
-let canvasContext;
-let remoteVideoRect;
-let mouseDown = false;
-function init() {
-    mirrorButton = document.getElementById("join");
-    fullButton = document.getElementById("fullscreen");
-    streamCanvas = document.getElementById("screen");
-    canvasContext = streamCanvas.getContext("2d");
-    registerEvents();
-    registerDrawEvent();
-    mouseInit();
-}
+/**
+ * Handles all touch and mouse interactions on a target element.
+ * Calculates precise coordinates and dispatches events.
+ */
+class TouchController {
+    constructor(targetElement, onEvent) {
+        this.target = targetElement;
+        this.onEvent = onEvent;
+        this.isMouseDown = false;
 
-window.onload = init;
-
-function unInit() {
-    unregisterDrawEvent();
-    removeEvents();
-    unInitWebsocket();
-    mirrorButton = null;
-    fullButton = null;
-    canvasContext = null;
-    streamCanvas = null;
-    mouseUninit();
-}
-
-window.onbeforeunload = unInit;
-
-function registerEvents() {
-    mirrorButton.addEventListener("click", onMirrorButtonClick);
-    fullButton.addEventListener("click", onFullButtonClick);
-    var homeButton = document.getElementById("home");
-    homeButton.addEventListener("click", onHomeKeyClick);
-    var backButton = document.getElementById("back");
-    backButton.addEventListener("click", onBackKeyClick);
-}
-
-function removeEvents() {
-    mirrorButton.removeEventListener("click", onMirrorButtonClick);
-    fullButton.removeEventListener("click", onFullButtonClick);
-    var homeButton = document.getElementById("home");
-    homeButton.removeEventListener("click", onHomeKeyClick);
-    var backButton = document.getElementById("back");
-    backButton.removeEventListener("click", onBackKeyClick);
-}
-
-function onMirrorButtonClick(event) {
-    try {
-        unInitWebsocket();
-        initWebsocket();
-    }
-    catch (e) {
-        alert(e.name + " : " + e.message);
-        document.location.reload();
+        this.registerEvents();
     }
 
-    var home = document.getElementById("home");
-    home.style.visibility = "visible";
-    var back = document.getElementById("back");
-    back.style.visibility = "visible";
-}
-
-function onFullButtonClick(event) {
-    toggleFullScreen();
-}
-
-function toggleFullScreen() {
-    if (streamCanvas == null) return;
-    if (streamCanvas.requestFullscreen) {
-        streamCanvas.requestFullscreen();
-    } else {
-        console.log("ok");
-    }
-}
-
-function onHomeKeyClick(event) {
-    var h = codingKey("H");
-    sendMouseMessage(h);
-
-}
-
-function onBackKeyClick(event) {
-    var h = codingKey("B");
-    sendMouseMessage(h);
-}
-
-function codingKey(key) {
-    return "K," + key + ",0";
-}
-
-
-function initWebsocket() {
-    console.log('initWebsocket: init.');
-
-    if (imageWebsocket != null) return;
-
-    const url = 'ws://' + window.location.host + '/screen';
-    imageWebsocket = new WebsocketHeartbeatJs({
-        url: url,
-        pingTimeout: 8000,
-        pongTimeout: 8000
-    });
-
-    imageWebsocket.onopen = function () {
-        console.log('websocket is open!!!!');
-    };
-
-    imageWebsocket.onmessage = function (e) {
-        prepareImage(e.data);
-    };
-    imageWebsocket.onreconnect = function () {
-        console.log('websocket reconnected once!!');
-    }
-}
-
-function unInitWebsocket() {
-    if (imageWebsocket == null) return;
-    imageWebsocket.close();
-    imageWebsocket = null;
-}
-
-function prepareImage(bytearray) {
-    const blob = new Blob([bytearray], { type: "image/jpeg" });
-    if (imageQueue.length > 8) {
-        console.log("trigger empty blob!!!! ");
-        imageQueue = [];
-    }
-    //console.log("image to queue: ", imageQueue.length);
-    imageQueue.push(blob);
-}
-
-function registerDrawEvent() {
-    if (!freshHandle) {
-        freshHandle = setInterval(drawImage, 32);
-    }
-}
-
-function unregisterDrawEvent() {
-    clearInterval(freshHandle);
-    freshHandle = null;
-}
-
-function drawImage() {
-    if (imageQueue.length == 0) {
-        return;
+    registerEvents() {
+        this.target.addEventListener('mousedown', this.#handleMouseDown.bind(this));
+        this.target.addEventListener('mouseup', this.#handleMouseUp.bind(this));
+        this.target.addEventListener('mousemove', this.#handleMouseMove.bind(this));
+        this.target.addEventListener('touchstart', this.#handleTouchStart.bind(this));
+        this.target.addEventListener('touchend', this.#handleTouchEnd.bind(this));
+        this.target.addEventListener('touchmove', this.#handleTouchMove.bind(this));
     }
 
-    var blob = imageQueue.shift();
-    var imageURL = urlCreator.createObjectURL(blob);
-    var img = new Image();
-    img.onload = function () {
-        streamCanvas.width = img.naturalWidth;
-        streamCanvas.height = img.naturalHeight;
-        urlCreator.revokeObjectURL(imageURL);
-        imageURL = null;
-        var srcRect = {
-            x: 0, y: 0,
-            width: img.naturalWidth,
-            height: img.naturalHeight
-        };
-        var dstRect = srcRect;
-        //var canvasContext = streamCanvas.getContext("2d");
-        try {
-            canvasContext.drawImage(img,
-                srcRect.x,
-                srcRect.y,
-                srcRect.width,
-                srcRect.height,
-                dstRect.x,
-                dstRect.y,
-                dstRect.width,
-                dstRect.height
-            );
+    destroy() {
+        // In a more complex app, you'd remove listeners here.
+    }
 
-        } catch (e) {
-            console.log("draw image failed", e);
+    #handleMouseDown(e) {
+        this.isMouseDown = true;
+        const pos = this.#getPosition(e.clientX, e.clientY);
+        if (pos) this.onEvent('D', pos.x, pos.y); // D for Down
+    }
+
+    #handleMouseUp(e) {
+        if (!this.isMouseDown) return;
+        this.isMouseDown = false;
+        const pos = this.#getPosition(e.clientX, e.clientY);
+        if (pos) this.onEvent('U', pos.x, pos.y); // U for Up
+    }
+
+    #handleMouseMove(e) {
+        if (!this.isMouseDown) return;
+        const pos = this.#getPosition(e.clientX, e.clientY);
+        if (pos) this.onEvent('M', pos.x, pos.y); // M for Move
+    }
+
+    #handleTouchStart(e) {
+        e.preventDefault();
+        const touch = e.changedTouches[0];
+        const pos = this.#getPosition(touch.clientX, touch.clientY);
+        if (pos) this.onEvent('D', pos.x, pos.y);
+    }
+
+    #handleTouchEnd(e) {
+        e.preventDefault();
+        const touch = e.changedTouches[0];
+        const pos = this.#getPosition(touch.clientX, touch.clientY);
+        if (pos) this.onEvent('U', pos.x, pos.y);
+    }
+
+    #handleTouchMove(e) {
+        e.preventDefault();
+        const touch = e.changedTouches[0];
+        const pos = this.#getPosition(touch.clientX, touch.clientY);
+        if (pos) this.onEvent('M', pos.x, pos.y);
+    }
+
+    #getPosition(clientX, clientY) {
+        const rect = this.target.getBoundingClientRect();
+        const imageWidth = this.target.width;
+        const imageHeight = this.target.height;
+
+        if (imageWidth === 0 || imageHeight === 0) return null;
+
+        const clickX = clientX - rect.left;
+        const clickY = clientY - rect.top;
+
+        const displayWidth = rect.width;
+        const displayHeight = rect.height;
+
+        const imageAspect = imageWidth / imageHeight;
+        const displayAspect = displayWidth / displayHeight;
+
+        let scaledWidth, scaledHeight, offsetX, offsetY;
+
+        if (displayAspect > imageAspect) {
+            scaledHeight = displayHeight;
+            scaledWidth = scaledHeight * imageAspect;
+            offsetX = (displayWidth - scaledWidth) / 2;
+            offsetY = 0;
+        } else {
+            scaledWidth = displayWidth;
+            scaledHeight = scaledWidth / imageAspect;
+            offsetX = 0;
+            offsetY = (displayHeight - scaledHeight) / 2;
         }
-        img = null;
-        blob = null;
-        //canvasContext = null;
+
+        const xOnScaled = clickX - offsetX;
+        const yOnScaled = clickY - offsetY;
+
+        const finalX = Math.round((xOnScaled / scaledWidth) * imageWidth);
+        const finalY = Math.round((yOnScaled / scaledHeight) * imageHeight);
+
+        if (finalX < 0 || finalX > imageWidth || finalY < 0 || finalY > imageHeight) {
+            return null;
+        }
+        return { x: finalX, y: finalY };
     }
-    img.src = imageURL;
 }
 
-function mouseInit() {
-    remoteVideoRect = document.getElementById('screen');
-    remoteVideoRect.addEventListener('mousedown', mouseDownHandler);
-    remoteVideoRect.addEventListener('mouseup', mouseUpHandler);
-}
-function mouseUninit() {
-    remoteVideoRect.removeEventListener('mouseup', mouseUpHandler);
-    remoteVideoRect.removeEventListener('mousedown', mouseDownHandler);
-}
+/**
+ * Main application controller.
+ * Manages UI, WebSocket connection, and rendering.
+ */
+class AppController {
+    constructor() {
+        this.joinButton = document.getElementById("join");
+        this.fullScreenButton = document.getElementById("fullscreen");
+        this.homeButton = document.getElementById("home");
+        this.backButton = document.getElementById("back");
+        this.streamCanvas = document.getElementById("screen");
 
-function mouseDownHandler(e) {
-    mouseDown = true;
-}
+        this.canvasContext = this.streamCanvas.getContext("2d");
+        this.websocket = null;
+        this.touchController = null;
+        this.imageQueue = [];
+        this.drawInterval = null;
 
-function mouseUpHandler(e) {
-    if (!mouseDown)
-        return;
-    mouseDown = false;
-    mouseHandler(e, 'up');
-}
-
-function getPosition(e) {
-    let rect = e.target.getBoundingClientRect();
-    let x1 = e.clientX - rect.left;
-    let y1 = e.clientY - rect.top;
-    let x = 1.0;
-    let y = 1.0;
-
-    if (e.target.clientWidth >= e.target.clientHeight) {
-        var aspect = 1.0 * e.target.width / e.target.height;
-        y = e.target.height / e.target.clientHeight * y1;
-        var pictureWidth = e.target.clientHeight * aspect;
-        var offset = (e.target.clientWidth - pictureWidth) / 2;
-        var xValue = x1 - offset;
-        x = xValue * e.target.width / pictureWidth;
-    } else {
-        x = e.target.width / e.target.clientWidth * x1;
-        var aspect = 1.0 * e.target.height / e.target.width;
-        var pictureHeight = e.target.clientWidth * aspect;
-        var offset = (e.target.clientHeight - pictureHeight) / 2;
-        var yValue = y1 - offset;
-        y = yValue * e.target.height / pictureHeight;
-    }
-    // console.log("x=" + x + ", width:" + e.target.clientWidth + "  x1=" + x1 + " rw:" + e.target.width);
-    // console.log("y=" + y + ", height:" + e.target.clientHeight + "  y1=" + y1 + " rh:" + e.target.height);
-    return { x, y };
-}
-
-
-function mouseHandler(e, action) {
-    let position = getPosition(e);
-    var msg = codingPosition(position);
-    sendMouseMessage(msg);
-}
-
-function codingPosition(position) {
-    return "M," + position.x + "," + position.y;
-}
-
-function sendMouseMessage(message) {
-    if (imageWebsocket == null)
-        return;
-
-    try {
-        var msg = message;
-        imageWebsocket.send(msg);
-    } catch (e) {
-        console.log(e);
+        this.#registerEvents();
+        this.#startDrawing();
     }
 
+    #registerEvents() {
+        this.joinButton.addEventListener("click", this.#onJoinClick.bind(this));
+        this.fullScreenButton.addEventListener("click", this.#onFullScreenClick.bind(this));
+        this.homeButton.addEventListener("click", () => this.#sendKey("H"));
+        this.backButton.addEventListener("click", () => this.#sendKey("B"));
+        window.onbeforeunload = this.#destroy.bind(this);
+    }
+
+    #destroy() {
+        this.#stopDrawing();
+        this.#closeWebSocket();
+    }
+
+    #onJoinClick() {
+        try {
+            this.#closeWebSocket();
+            this.#initWebSocket();
+            this.touchController = new TouchController(this.streamCanvas, this.#sendTouchEvent.bind(this));
+            this.homeButton.style.visibility = "visible";
+            this.backButton.style.visibility = "visible";
+        } catch (e) {
+            console.error("Failed to start mirroring:", e);
+            alert(`Error starting connection: ${e.message}`);
+        }
+    }
+
+    #onFullScreenClick() {
+        if (this.streamCanvas.requestFullscreen) {
+            this.streamCanvas.requestFullscreen();
+        }
+    }
+
+    #initWebSocket() {
+        if (this.websocket) return;
+        const url = `ws://${window.location.host}/screen`;
+        this.websocket = new WebsocketHeartbeatJs({ url, pingTimeout: 8000, pongTimeout: 8000 });
+
+        this.websocket.onopen = () => console.log('WebSocket connection established.');
+        this.websocket.onmessage = (e) => this.#queueImage(e.data);
+        this.websocket.onreconnect = () => console.log('WebSocket reconnected.');
+        this.websocket.onclose = () => console.log('WebSocket connection closed.');
+        this.websocket.onerror = (e) => console.error('WebSocket error:', e);
+    }
+
+    #closeWebSocket() {
+        if (this.websocket) {
+            this.websocket.close();
+            this.websocket = null;
+        }
+    }
+
+    #queueImage(data) {
+        if (this.imageQueue.length > 5) {
+            this.imageQueue = []; // Drop frames to reduce latency
+        }
+        this.imageQueue.push(new Blob([data], { type: "image/jpeg" }));
+    }
+
+    #startDrawing() {
+        this.drawInterval = setInterval(() => this.#drawImage(), 32); // ~30fps
+    }
+
+    #stopDrawing() {
+        clearInterval(this.drawInterval);
+        this.drawInterval = null;
+    }
+
+    async #drawImage() {
+        const blob = this.imageQueue.shift();
+        if (!blob) return;
+
+        try {
+            const imageBitmap = await createImageBitmap(blob);
+            this.streamCanvas.width = imageBitmap.width;
+            this.streamCanvas.height = imageBitmap.height;
+            this.canvasContext.drawImage(imageBitmap, 0, 0);
+            imageBitmap.close();
+        } catch (e) {
+            console.error("Failed to draw image:", e);
+        }
+    }
+
+    #sendKey(key) {
+        this.#sendMessage(`K,${key},0`);
+    }
+    
+    #sendTouchEvent(type, x, y) {
+        this.#sendMessage(`${type},${x},${y}`);
+    }
+
+    #sendMessage(message) {
+        if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+            this.websocket.send(message);
+        }
+    }
 }
 
+// Initialize the application when the DOM is fully loaded.
+window.addEventListener('DOMContentLoaded', () => {
+    new AppController();
+});
