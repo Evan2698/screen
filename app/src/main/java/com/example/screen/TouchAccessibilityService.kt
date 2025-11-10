@@ -46,10 +46,9 @@ class TouchAccessibilityService : AccessibilityService() {
     private fun startServer() {
         serviceScope.launch {
             server = embeddedServer(Netty, port = 8081) {
-                install(WebSockets)
-                {
-                    pingPeriodMillis = 15000L // 15 秒
-                    timeoutMillis = 15000L     // 15秒
+                install(WebSockets) {
+                    pingPeriodMillis = 15000L
+                    timeoutMillis = 15000L
                     maxFrameSize = Long.MAX_VALUE
                     masking = false
                 }

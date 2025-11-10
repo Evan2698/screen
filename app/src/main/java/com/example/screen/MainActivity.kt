@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -106,7 +107,9 @@ class MainActivity : ComponentActivity() {
                         if (event == Lifecycle.Event.ON_RESUME) {
                             requestServiceState(ScreenCaptureService.ACTION_REQUEST_STATE)
                             requestServiceState(VhostsService.ACTION_REQUEST_STATE)
-                            isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                                isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
+                            }
                         }
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
@@ -213,14 +216,21 @@ fun MainScreen(
         Divider(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp))
 
         // Section 2: Accessibility Service Control
-        if (!isAccessibilityEnabled) {
-            Text(text = "Remote control is disabled.")
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = onEnableAccessibilityClick) {
-                Text("Enable Remote Control")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            if (!isAccessibilityEnabled) {
+                Text(text = "Remote control is disabled.")
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = onEnableAccessibilityClick) {
+                    Text("Enable Remote Control")
+                }
+            } else {
+                Text(text = "Remote control is enabled.")
             }
         } else {
-            Text(text = "Remote control is enabled.")
+            Text(
+                text = "Remote control is not supported on this device (requires Android 7.0+).",
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
