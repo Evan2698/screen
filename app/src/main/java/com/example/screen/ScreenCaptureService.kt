@@ -39,7 +39,10 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
+import io.ktor.server.websocket.pingPeriod
+import io.ktor.server.websocket.timeout
 import io.ktor.server.websocket.webSocket
+
 import io.ktor.websocket.Frame
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +54,8 @@ import java.io.IOException
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.nio.ByteBuffer
+import java.time.*
+
 
 
 @Suppress("DEPRECATION")
@@ -148,7 +153,12 @@ class ScreenCaptureService : Service() {
         Log.d(TAG, "Starting Ktor server...")
         val assetManager = applicationContext.assets
         server = embeddedServer(Netty, port = SERVER_PORT) {
-            install(WebSockets)
+            install(WebSockets){
+                pingPeriodMillis = 15000L // 15 秒
+                timeoutMillis = 15000L     // 15秒
+                maxFrameSize = Long.MAX_VALUE
+                masking = false
+            }
             routing {
                 // WebSocket for screen streaming
                 webSocket("/screen") {

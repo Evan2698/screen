@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">screen</string>
+    <string name="app_name">Screen</string>
+    <string name="accessibility_service_description">Enables remote control of the device by simulating user gestures. This allows clicks and swipes sent from the web interface to be performed on the device.</string>
 </resources>

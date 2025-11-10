@@ -1,6 +1,5 @@
 package com.example.screen
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -10,24 +9,19 @@ import android.media.projection.MediaProjectionManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.text.TextUtils
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
+import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -41,13 +35,13 @@ import com.github.xfalcon.vhosts.vservice.VhostsService
 class MainActivity : ComponentActivity() {
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
-    private var screenCaptureResult: Intent? = null
+    private var screenCaptureResultData: Intent? = null
 
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            startAllServices(screenCaptureResult)
+            startAllServices(screenCaptureResultData)
         }
     }
 
@@ -55,12 +49,12 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            screenCaptureResult = result.data
+            screenCaptureResultData = result.data
             val vpnIntent = VpnService.prepare(this)
             if (vpnIntent != null) {
                 vpnPermissionLauncher.launch(vpnIntent)
             } else {
-                startAllServices(screenCaptureResult)
+                startAllServices(screenCaptureResultData)
             }
         }
     }
@@ -73,6 +67,7 @@ class MainActivity : ComponentActivity() {
             ScreenTheme {
                 var screenCaptureRunning by remember { mutableStateOf(false) }
                 var vpnServiceRunning by remember { mutableStateOf(false) }
+                var isAccessibilityEnabled by remember { mutableStateOf(false) }
                 var serverAddress by remember { mutableStateOf<String?>(null) }
 
                 val context = LocalContext.current
@@ -100,7 +95,6 @@ class MainActivity : ComponentActivity() {
                         addAction(ScreenCaptureService.ACTION_STATE_CHANGED)
                         addAction(VhostsService.ACTION_STATE_CHANGED)
                     }
-
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         context.registerReceiver(receiver, intentFilter, RECEIVER_NOT_EXPORTED)
                     } else {
@@ -112,6 +106,7 @@ class MainActivity : ComponentActivity() {
                         if (event == Lifecycle.Event.ON_RESUME) {
                             requestServiceState(ScreenCaptureService.ACTION_REQUEST_STATE)
                             requestServiceState(VhostsService.ACTION_REQUEST_STATE)
+                            isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
                         }
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
@@ -124,15 +119,20 @@ class MainActivity : ComponentActivity() {
 
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     val isAnyServiceRunning = screenCaptureRunning || vpnServiceRunning
-                    ControlScreen(
-                        isServiceRunning = isAnyServiceRunning,
+                    MainScreen(
+                        isAnyServiceRunning = isAnyServiceRunning,
+                        isAccessibilityEnabled = isAccessibilityEnabled,
                         serverAddress = serverAddress,
-                        onToggleClick = {
+                        onToggleMainServices = {
                             if (isAnyServiceRunning) {
                                 stopAllServices()
                             } else {
                                 screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
                             }
+                        },
+                        onEnableAccessibilityClick = {
+                            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            context.startActivity(intent)
                         }
                     )
                 }
@@ -145,20 +145,18 @@ class MainActivity : ComponentActivity() {
         sendBroadcast(intent)
     }
 
-    private fun startAllServices(screenCaptureIntentData: Intent?) {
-        // Start ScreenCaptureService
-        val screenCaptureIntent = Intent(this, ScreenCaptureService::class.java).apply {
+    private fun startAllServices(screenCaptureData: Intent?) {
+        val screenIntent = Intent(this, ScreenCaptureService::class.java).apply {
             action = ScreenCaptureService.ACTION_START
             putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, Activity.RESULT_OK)
-            putExtra(ScreenCaptureService.EXTRA_DATA, screenCaptureIntentData)
+            putExtra(ScreenCaptureService.EXTRA_DATA, screenCaptureData)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(screenCaptureIntent)
+            startForegroundService(screenIntent)
         } else {
-            startService(screenCaptureIntent)
+            startService(screenIntent)
         }
 
-        // Start VhostsService
         val vpnIntent = Intent(this, VhostsService::class.java).apply {
             action = VhostsService.ACTION_START
         }
@@ -173,22 +171,56 @@ class MainActivity : ComponentActivity() {
         startService(Intent(this, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_STOP })
         startService(Intent(this, VhostsService::class.java).apply { action = VhostsService.ACTION_STOP })
     }
+
+    private fun checkAccessibilityServiceEnabled(context: Context): Boolean {
+        val serviceId = "${context.packageName}/${TouchAccessibilityService::class.java.canonicalName}"
+        try {
+            val settingValue = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            return settingValue?.let { TextUtils.SimpleStringSplitter(':').apply { setString(it) }.any { s -> s.equals(serviceId, ignoreCase = true) } } ?: false
+        } catch (e: Exception) {
+            Log.d("TAG", e.toString())
+            return false
+        }
+    }
 }
 
 @Composable
-fun ControlScreen(isServiceRunning: Boolean, serverAddress: String?, onToggleClick: () -> Unit) {
+fun MainScreen(
+    isAnyServiceRunning: Boolean,
+    isAccessibilityEnabled: Boolean,
+    serverAddress: String?,
+    onToggleMainServices: () -> Unit,
+    onEnableAccessibilityClick: () -> Unit
+) {
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Button(onClick = onToggleClick) {
-            Text(if (isServiceRunning) "Stop Capture" else "Start Capture")
+        // Section 1: Main Services Control
+        Button(onClick = onToggleMainServices) {
+            Text(if (isAnyServiceRunning) "Stop Services" else "Start Services")
         }
         Spacer(modifier = Modifier.height(16.dp))
-        if (isServiceRunning && serverAddress != null) {
-            Text(text = "Server running at:")
+        if (isAnyServiceRunning && serverAddress != null) {
+            Text(text = "Screen running at:")
             Text(text = serverAddress)
+        } else {
+            Text(text = "All services are stopped.")
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+        Divider(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp))
+
+        // Section 2: Accessibility Service Control
+        if (!isAccessibilityEnabled) {
+            Text(text = "Remote control is disabled.")
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = onEnableAccessibilityClick) {
+                Text("Enable Remote Control")
+            }
+        } else {
+            Text(text = "Remote control is enabled.")
         }
     }
 }

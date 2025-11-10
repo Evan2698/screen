@@ -67,6 +67,8 @@ dependencies {
     implementation("io.ktor:ktor-server-core-jvm:2.3.13")
     implementation("io.ktor:ktor-server-netty-jvm:2.3.13")
     implementation("io.ktor:ktor-server-websockets-jvm:2.3.13")
+    implementation("com.jakewharton.threetenabp:threetenabp:1.4.0")
+
 
     // Jetpack Compose
     implementation(platform("androidx.compose:compose-bom:2023.08.00"))
