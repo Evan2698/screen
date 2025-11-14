@@ -37,7 +37,6 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.netty.NettyApplicationEngine
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
-import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
@@ -59,8 +58,6 @@ import java.net.NetworkInterface
 import java.nio.ByteBuffer
 import kotlin.time.Duration.Companion.seconds
 
-
-@Suppress("DEPRECATION")
 class ScreenCaptureService : Service() {
 
     private val serviceJob = SupervisorJob()
@@ -76,9 +73,7 @@ class ScreenCaptureService : Service() {
     private var backgroundHandler: Handler? = null
 
     private val frameFlow = MutableSharedFlow<ByteArray>(replay = 1)
-    private var server: EmbeddedServer<NettyApplicationEngine, io.ktor.server.netty.NettyApplicationEngine.Configuration>? =
-        null
-
+    private var server: EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration>? = null
 
     private val stateRequestReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -96,12 +91,11 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    @SuppressLint("UnprotectedReceiver", "UnspecifiedRegisterReceiverFlag")
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service onCreate")
-        mediaProjectionManager =
-            getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
         startBackgroundThread()
@@ -126,29 +120,18 @@ class ScreenCaptureService : Service() {
                 startForeground(NOTIFICATION_ID, createNotification())
 
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
-                val data: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
-                } else {
-                    intent.getParcelableExtra(EXTRA_DATA)
-                }
+                @Suppress("DEPRECATION")
+                val data: Intent? = intent.getParcelableExtra(EXTRA_DATA)
 
                 if (resultCode == Activity.RESULT_OK && data != null) {
                     Log.d(TAG, "Permission granted, starting capture")
                     startCapture(resultCode, data)
                 } else {
-                    Log.w(
-                        TAG,
-                        "Permission denied or data invalid. Stopping service. Result Code: $resultCode, Data is null: ${data == null}"
-                    )
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                    } else {
-                        stopForeground(true)
-                    }
+                    Log.w(TAG, "Permission denied or data invalid. Stopping service. Result Code: $resultCode, Data is null: ${data == null}")
+                    stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
             }
-
             ACTION_STOP -> {
                 Log.d(TAG, "Received stop action")
                 stopCapture()
@@ -170,48 +153,49 @@ class ScreenCaptureService : Service() {
             routing {
                 staticResources("/", "assets/webroot")
                 webSocket("/screen") {
-                    Log.d(TAG, "WebSocket client connected")
-                    val job = launch {
-                        try {
-                            frameFlow.collectLatest { frame ->
-                                send(Frame.Binary(true, frame))
-                            }
-                        } finally {
-                            Log.d(TAG, "WebSocket client disconnected")
+                    Log.d(TAG, "WebSocket client connected to /screen")
+                    
+                    // Job 1: Send screen frames out
+                    val sendJob = launch {
+                        frameFlow.collectLatest { frame ->
+                            send(Frame.Binary(true, frame))
                         }
                     }
-
-                    runCatching {
-                        Log.d(TAG, "Touch WebSocket client connected.")
+                    
+                    // Job 2: Receive touch commands in
+                    val receiveJob = launch {
                         for (frame in incoming) {
                             if (frame is Frame.Text) {
-                                val text = frame.readText()
-                                Log.d(TAG, "Received touch command: $text")
-                                DispatcherHolder.dispatchTouchCommand(text)
+                                val command = frame.readText()
+                                Log.d(TAG, "Received command: $command")
+                                // Broadcast the command to be handled by the accessibility service
+                                DispatcherHolder.dispatchTouchCommand(command)
                             }
                         }
-                    }.onFailure { exception ->
-                        Log.d(TAG, "WebSocket exception: ${exception.localizedMessage}")
-                    }.also {
-                        job.cancel()
                     }
+
+                    // Wait for both jobs to complete
+                    receiveJob.join()
+                    sendJob.join()
+                    Log.d(TAG, "WebSocket client disconnected from /screen")
                 }
-                get("/hello") {
-                    call.respondText("Hello, world!")
+
+                get("/hello"){
+                    call.respond("hello world!!!")
                 }
             }
-        }.start(wait = false)
-
+        }.start()
         Log.d(TAG, "Ktor server started on port $SERVER_PORT")
     }
+
     @SuppressLint("DEPRECATION")
     private fun startCapture(resultCode: Int, data: Intent) {
         Log.d(TAG, "startCapture called")
         mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
         mediaProjection?.registerCallback(mediaProjectionCallback, backgroundHandler)
 
-        var width: Int
-        var height: Int
+        val width: Int
+        val height: Int
         val density: Int
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -227,21 +211,17 @@ class ScreenCaptureService : Service() {
             density = metrics.densityDpi
         }
 
-        // 这个地方可以做文章
-        //可以从网页获取图片大小，这样可以适应屏幕
-        val realWidth = width.toFloat() * SCREEN_RATIO
-        val realHeight = height.toFloat() * SCREEN_RATIO
-        width = realWidth.toInt()
-        height = realHeight.toInt()
+        val realWidth = (width * SCREEN_RATIO).toInt()
+        val realHeight = (height * SCREEN_RATIO).toInt()
 
         Log.d(TAG, "Screen dimensions: $realWidth x $realHeight @ $density dpi")
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        imageReader = ImageReader.newInstance(realWidth, realHeight, PixelFormat.RGBA_8888, 2)
         imageReader?.setOnImageAvailableListener(this::onImageAvailable, backgroundHandler)
 
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ScreenCapture",
-            width, height, density,
+            realWidth, realHeight, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface,
             null,
@@ -254,7 +234,6 @@ class ScreenCaptureService : Service() {
         val image: Image? = try {
             reader.acquireLatestImage()
         } catch (e: Exception) {
-            Log.e(TAG, "Error acquiring image: ", e)
             null
         }
 
@@ -264,7 +243,6 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    @SuppressLint("UseKtx")
     private fun processImage(image: Image) {
         val planes: Array<Image.Plane> = image.planes
         val buffer: ByteBuffer = planes[0].buffer
@@ -274,11 +252,7 @@ class ScreenCaptureService : Service() {
         val imgWidth: Int = image.width + rowPadding / pixelStride
         val imgHeight: Int = image.height
 
-        val bitmap: Bitmap = Bitmap.createBitmap(
-            imgWidth,
-            imgHeight,
-            Bitmap.Config.ARGB_8888
-        )
+        val bitmap: Bitmap = Bitmap.createBitmap(imgWidth, imgHeight, Bitmap.Config.ARGB_8888)
         bitmap.copyPixelsFromBuffer(buffer)
         val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
 
@@ -304,46 +278,29 @@ class ScreenCaptureService : Service() {
             mediaProjection = null
             Log.d(TAG, "Capture resources released")
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(Service.STOP_FOREGROUND_REMOVE)
-        } else {
-            stopForeground(true)
-        }
+        stopForeground(Service.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     private fun startBackgroundThread() {
-        handlerThread = HandlerThread("ScreenCaptureThread")
-        handlerThread?.start()
+        handlerThread = HandlerThread("ScreenCaptureThread").apply { start() }
         backgroundHandler = Handler(handlerThread!!.looper)
-        Log.d(TAG, "Background thread started")
     }
 
     private fun stopBackgroundThread() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            handlerThread?.quitSafely()
-        } else {
-            handlerThread?.quit()
-        }
+        handlerThread?.quitSafely()
         try {
             handlerThread?.join(500)
             handlerThread = null
             backgroundHandler = null
-            Log.d(TAG, "Background thread stopped")
         } catch (e: InterruptedException) {
             Log.e(TAG, "Error stopping background thread", e)
         }
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Screen Capture",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-        }
+        val channel = NotificationChannel(CHANNEL_ID, "Screen Capture", NotificationManager.IMPORTANCE_LOW)
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
     private fun createNotification(): Notification {
@@ -354,9 +311,7 @@ class ScreenCaptureService : Service() {
             .build()
     }
 
-    override fun onBind(intent: Intent?): IBinder? {
-        return null
-    }
+    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         super.onDestroy()
@@ -385,15 +340,8 @@ class ScreenCaptureService : Service() {
 
     private fun getLocalIpAddress(): String? {
         try {
-            val networkInterfaces = NetworkInterface.getNetworkInterfaces().toList()
-            for (networkInterface in networkInterfaces) {
-                val addresses = networkInterface.inetAddresses.toList()
-                for (address in addresses) {
-                    if (!address.isLoopbackAddress && address is Inet4Address) {
-                        return address.hostAddress
-                    }
-                }
-            }
+            return NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
+                .firstOrNull { !it.isLoopbackAddress && it is Inet4Address }?.hostAddress
         } catch (ex: Exception) {
             Log.e(TAG, "Error getting IP address", ex)
         }
@@ -403,17 +351,20 @@ class ScreenCaptureService : Service() {
     companion object {
         private const val TAG = "ScreenCaptureService"
 
-        const val ACTION_START = "ACTION_START"
-        const val ACTION_STOP = "ACTION_STOP"
+        const val ACTION_START = "com.example.screen.ACTION_START"
+        const val ACTION_STOP = "com.example.screen.ACTION_STOP"
+        const val ACTION_REQUEST_STATE = "com.example.screen.ACTION_REQUEST_STATE"
+        const val ACTION_STATE_CHANGED = "com.example.screen.ACTION_STATE_CHANGED"
+
+
+        const val EXTRA_IS_RUNNING = "EXTRA_IS_RUNNING"
+        const val EXTRA_SERVER_ADDRESS = "EXTRA_SERVER_ADDRESS"
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_DATA = "EXTRA_DATA"
 
-        const val ACTION_STATE_CHANGED = "com.example.screen.ACTION_STATE_CHANGED"
-        const val ACTION_REQUEST_STATE = "com.example.screen.ACTION_REQUEST_STATE"
-        const val EXTRA_IS_RUNNING = "EXTRA_IS_RUNNING"
-        const val EXTRA_SERVER_ADDRESS = "EXTRA_SERVER_ADDRESS"
 
-        const val SERVER_PORT = 8080
+        private const val SCREEN_RATIO = 0.50f
+        private const val SERVER_PORT = 8080
 
         @Volatile
         var isRunning = false
@@ -421,9 +372,5 @@ class ScreenCaptureService : Service() {
 
         private const val CHANNEL_ID = "ScreenCaptureChannel"
         private const val NOTIFICATION_ID = 1002
-
-        private const val SCREEN_RATIO = 0.518
-
-
     }
 }
