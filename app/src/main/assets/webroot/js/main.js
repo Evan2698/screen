@@ -153,7 +153,6 @@ class AppController {
         try {
             this.#closeAllWebSockets();
             this.#initImageSocket();
-            this.#initTouchSocket(); // Initialize the new touch socket
             this.touchController = new TouchController(this.streamCanvas, this.#sendTouchEvent.bind(this));
             this.homeButton.style.visibility = "visible";
             this.backButton.style.visibility = "visible";
@@ -176,28 +175,15 @@ class AppController {
 
         this.imageSocket.onopen = () => console.log('Image WebSocket connection established.');
         this.imageSocket.onmessage = (e) => this.#queueImage(e.data);
-        this.imageSocket.onclose = () => console.log('Image WebSocket connection closed.');
+        this.imageSocket.onclose = (e) => console.log('Image WebSocket connection closed.', e);
         this.imageSocket.onerror = (e) => console.error('Image WebSocket error:', e);
     }
 
-    #initTouchSocket() {
-        if (this.touchSocket) return;
-        const url = `ws://${window.location.hostname}:8081/touch`; // Use port 8081 for touch
-        this.touchSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 8000, pongTimeout: 8000 });
-
-        this.touchSocket.onopen = () => console.log('Touch WebSocket connection established.');
-        this.touchSocket.onclose = () => console.log('Touch WebSocket connection closed.');
-        this.touchSocket.onerror = (e) => console.error('Touch WebSocket error:', e);
-    }
 
     #closeAllWebSockets() {
         if (this.imageSocket) {
             this.imageSocket.close();
             this.imageSocket = null;
-        }
-        if (this.touchSocket) {
-            this.touchSocket.close();
-            this.touchSocket = null;
         }
     }
 
@@ -241,8 +227,8 @@ class AppController {
     }
 
     #sendMessageToTouchSocket(message) {
-        if (this.touchSocket && this.touchSocket.readyState === WebSocket.OPEN) {
-            this.touchSocket.send(message);
+        if (this.imageSocket && this.imageSocket.readyState === WebSocket.OPEN) {
+            this.imageSocket.send(message);
         }
     }
 }

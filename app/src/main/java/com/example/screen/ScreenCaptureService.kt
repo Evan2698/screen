@@ -30,26 +30,34 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
 import io.ktor.server.application.install
+import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.http.content.staticResources
 import io.ktor.server.netty.Netty
 import io.ktor.server.netty.NettyApplicationEngine
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
+import io.ktor.server.websocket.pingPeriod
+import io.ktor.server.websocket.timeout
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.nio.ByteBuffer
+import kotlin.time.Duration.Companion.seconds
 
 
 @Suppress("DEPRECATION")
@@ -68,7 +76,8 @@ class ScreenCaptureService : Service() {
     private var backgroundHandler: Handler? = null
 
     private val frameFlow = MutableSharedFlow<ByteArray>(replay = 1)
-    private var server: NettyApplicationEngine? = null
+    private var server: EmbeddedServer<NettyApplicationEngine, io.ktor.server.netty.NettyApplicationEngine.Configuration>? =
+        null
 
 
     private val stateRequestReceiver = object : BroadcastReceiver() {
@@ -91,7 +100,8 @@ class ScreenCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service onCreate")
-        mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        mediaProjectionManager =
+            getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
         startBackgroundThread()
@@ -126,7 +136,10 @@ class ScreenCaptureService : Service() {
                     Log.d(TAG, "Permission granted, starting capture")
                     startCapture(resultCode, data)
                 } else {
-                    Log.w(TAG, "Permission denied or data invalid. Stopping service. Result Code: $resultCode, Data is null: ${data == null}")
+                    Log.w(
+                        TAG,
+                        "Permission denied or data invalid. Stopping service. Result Code: $resultCode, Data is null: ${data == null}"
+                    )
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                         stopForeground(STOP_FOREGROUND_REMOVE)
                     } else {
@@ -135,6 +148,7 @@ class ScreenCaptureService : Service() {
                     stopSelf()
                 }
             }
+
             ACTION_STOP -> {
                 Log.d(TAG, "Received stop action")
                 stopCapture()
@@ -147,67 +161,49 @@ class ScreenCaptureService : Service() {
         Log.d(TAG, "Starting Ktor server...")
         val assetManager = applicationContext.assets
         server = embeddedServer(Netty, port = SERVER_PORT) {
-            install(WebSockets){
-                pingPeriodMillis = 15000L // 15 秒
-                timeoutMillis = 15000L     // 15秒
+            install(WebSockets) {
+                pingPeriod = 25.seconds
+                timeout = 25.seconds
                 maxFrameSize = Long.MAX_VALUE
                 masking = false
             }
             routing {
-                // WebSocket for screen streaming
+                staticResources("/", "assets/webroot")
                 webSocket("/screen") {
                     Log.d(TAG, "WebSocket client connected")
-                    try {
-                        frameFlow.collectLatest { frame ->
-                            send(Frame.Binary(true, frame))
+                    val job = launch {
+                        try {
+                            frameFlow.collectLatest { frame ->
+                                send(Frame.Binary(true, frame))
+                            }
+                        } finally {
+                            Log.d(TAG, "WebSocket client disconnected")
                         }
-                    } finally {
-                        Log.d(TAG, "WebSocket client disconnected")
+                    }
+
+                    runCatching {
+                        Log.d(TAG, "Touch WebSocket client connected.")
+                        for (frame in incoming) {
+                            if (frame is Frame.Text) {
+                                val text = frame.readText()
+                                Log.d(TAG, "Received touch command: $text")
+                                DispatcherHolder.dispatchTouchCommand(text)
+                            }
+                        }
+                    }.onFailure { exception ->
+                        Log.d(TAG, "WebSocket exception: ${exception.localizedMessage}")
+                    }.also {
+                        job.cancel()
                     }
                 }
-
-                // Catch-all route for static assets from the "webroot" folder
-                get("/{path...}") {
-                    var path = call.parameters.getAll("path")?.joinToString("/") ?: "index.html"
-                    if (path.isBlank()) {
-                        path = "index.html"
-                    }
-                    Log.d(TAG, "Request for static asset: $path")
-
-                    try {
-                        val fileContent = assetManager.open("webroot/$path").readBytes()
-                        val contentType = when {
-                            path.endsWith(".html") -> ContentType.Text.Html
-                            path.endsWith(".js") -> ContentType.Text.JavaScript
-                            path.endsWith(".css") -> ContentType.Text.CSS
-                            path.endsWith(".ico") -> ContentType.Image.XIcon
-                            path.endsWith(".png") -> ContentType.Image.PNG
-                            path.endsWith(".jpg") -> ContentType.Image.JPEG
-                            path.endsWith(".gif") -> ContentType.Image.GIF
-                            path.endsWith(".svg") -> ContentType.Image.SVG
-                            else -> ContentType.Application.OctetStream
-                        }
-                        call.respondBytes(fileContent, contentType)
-                    } catch (e: IOException) {
-                        Log.w(TAG, "Asset not found: webroot/$path")
-                        call.respond(HttpStatusCode.NotFound, "Asset not found: $path")
-                    }
-                }
-
-                get("/") {
-                    try {
-                        val fileContent = assetManager.open("webroot/index.html").readBytes()
-                        call.respondBytes(fileContent, ContentType.Text.Html)
-                    } catch (e: IOException) {
-                        Log.e(TAG, "index.html not found in assets!")
-                        call.respond(HttpStatusCode.NotFound, "index.html not found")
-                    }
+                get("/hello") {
+                    call.respondText("Hello, world!")
                 }
             }
-        }.start()
+        }.start(wait = false)
+
         Log.d(TAG, "Ktor server started on port $SERVER_PORT")
     }
-
     @SuppressLint("DEPRECATION")
     private fun startCapture(resultCode: Int, data: Intent) {
         Log.d(TAG, "startCapture called")
@@ -233,8 +229,8 @@ class ScreenCaptureService : Service() {
 
         // 这个地方可以做文章
         //可以从网页获取图片大小，这样可以适应屏幕
-        val realWidth = width.toFloat() * 0.518
-        val realHeight = height.toFloat() * 0.518
+        val realWidth = width.toFloat() * SCREEN_RATIO
+        val realHeight = height.toFloat() * SCREEN_RATIO
         width = realWidth.toInt()
         height = realHeight.toInt()
 
@@ -425,5 +421,9 @@ class ScreenCaptureService : Service() {
 
         private const val CHANNEL_ID = "ScreenCaptureChannel"
         private const val NOTIFICATION_ID = 1002
+
+        private const val SCREEN_RATIO = 0.518
+
+
     }
 }

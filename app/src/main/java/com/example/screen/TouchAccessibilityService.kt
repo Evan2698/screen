@@ -7,21 +7,14 @@ import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import androidx.annotation.RequiresApi
-import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
-import io.ktor.server.routing.routing
-import io.ktor.server.websocket.WebSockets
-import io.ktor.server.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
 
-class TouchAccessibilityService : AccessibilityService() {
+class TouchAccessibilityService : AccessibilityService() , Dispatcher{
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
@@ -44,33 +37,9 @@ class TouchAccessibilityService : AccessibilityService() {
     }
 
     private fun startServer() {
-        serviceScope.launch {
-            server = embeddedServer(Netty, port = 8081) {
-                install(WebSockets) {
-                    pingPeriodMillis = 15000L
-                    timeoutMillis = 15000L
-                    maxFrameSize = Long.MAX_VALUE
-                    masking = false
-                }
-                routing {
-                    webSocket("/touch") {
-                        Log.d(TAG, "Touch WebSocket client connected.")
-                        for (frame in incoming) {
-                            if (frame is Frame.Text) {
-                                val text = frame.readText()
-                                Log.d(TAG, "Received touch command: $text")
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                    handleTouchCommand(text)
-                                } else {
-                                    Log.w(TAG, "Gesture dispatching is not supported on this API level.")
-                                }
-                            }
-                        }
-                    }
-                }
-            }.start(wait = true)
-        }
+        DispatcherHolder.register(this)
     }
+
 
     @RequiresApi(Build.VERSION_CODES.N)
     private fun handleTouchCommand(command: String) {
@@ -114,10 +83,18 @@ class TouchAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        DispatcherHolder.unregister()
         super.onDestroy()
         Log.d(TAG, "Accessibility Service destroyed.")
         server.stop(1000, 2000)
         serviceScope.cancel()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    override fun dispatch(action: String):Int {
+        handleTouchCommand(action)
+
+        return 0
     }
 
     companion object {

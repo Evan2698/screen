@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.screen"
-        minSdk = 23
+        minSdk = 29
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -31,8 +31,6 @@ android {
         }
     }
     compileOptions {
-        // Enable core library desugaring
-        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
@@ -56,9 +54,6 @@ android {
 }
 
 dependencies {
-    // Core library desugaring
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
@@ -69,10 +64,10 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
 
     // Ktor
-    implementation("io.ktor:ktor-server-core-jvm:2.3.13")
-    implementation("io.ktor:ktor-server-netty-jvm:2.3.13")
-    implementation("io.ktor:ktor-server-websockets-jvm:2.3.13")
-    implementation("com.jakewharton.threetenabp:threetenabp:1.4.0")
+    val ktor_version = "3.3.2"
+    implementation("io.ktor:ktor-server-core:${ktor_version}")
+    implementation("io.ktor:ktor-server-netty:${ktor_version}")
+    implementation("io.ktor:ktor-server-websockets:${ktor_version}")
 
 
     // Jetpack Compose
