@@ -26,18 +26,12 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
-import io.ktor.http.ContentType
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.http.content.staticResources
 import io.ktor.server.netty.Netty
 import io.ktor.server.netty.NettyApplicationEngine
-import io.ktor.server.response.respond
-import io.ktor.server.response.respondBytes
-import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.pingPeriod
@@ -52,7 +46,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
-import java.io.IOException
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.nio.ByteBuffer
@@ -86,8 +79,8 @@ class ScreenCaptureService : Service() {
 
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
-            Log.d(TAG, "MediaProjection stopped by system")
-            stopCapture()
+            Log.d(TAG, "MediaProjection stopped by system, stopping service.")
+            stopSelf()
         }
     }
 
@@ -127,14 +120,13 @@ class ScreenCaptureService : Service() {
                     Log.d(TAG, "Permission granted, starting capture")
                     startCapture(resultCode, data)
                 } else {
-                    Log.w(TAG, "Permission denied or data invalid. Stopping service. Result Code: $resultCode, Data is null: ${data == null}")
-                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    Log.w(TAG, "Permission denied or data invalid. Code: $resultCode, Data is null: ${data == null}")
                     stopSelf()
                 }
             }
             ACTION_STOP -> {
                 Log.d(TAG, "Received stop action")
-                stopCapture()
+                stopSelf()
             }
         }
         return START_NOT_STICKY
@@ -142,7 +134,6 @@ class ScreenCaptureService : Service() {
 
     private fun startKtorServer() {
         Log.d(TAG, "Starting Ktor server...")
-        val assetManager = applicationContext.assets
         server = embeddedServer(Netty, port = SERVER_PORT) {
             install(WebSockets) {
                 pingPeriod = 25.seconds
@@ -151,38 +142,35 @@ class ScreenCaptureService : Service() {
                 masking = false
             }
             routing {
-                staticResources("/", "assets/webroot")
+                staticResources("/", "assets/webroot") {
+                    default("index.html")
+                }
+
                 webSocket("/screen") {
                     Log.d(TAG, "WebSocket client connected to /screen")
-                    
-                    // Job 1: Send screen frames out
+
                     val sendJob = launch {
                         frameFlow.collectLatest { frame ->
                             send(Frame.Binary(true, frame))
-                            Log.d(TAG, "update image")
                         }
                     }
-                    
-                    // Job 2: Receive touch commands in
-                    val receiveJob = launch {
+
+                    try {
                         for (frame in incoming) {
                             if (frame is Frame.Text) {
                                 val command = frame.readText()
                                 Log.d(TAG, "Received command: $command")
-                                // Broadcast the command to be handled by the accessibility service
-                                //DispatcherHolder.dispatchTouchCommand(command)
+                                val intent = Intent(ACTION_PERFORM_TOUCH_COMMAND).apply {
+                                    putExtra(EXTRA_TOUCH_COMMAND, command)
+                                    setPackage(packageName)
+                                }
+                                sendBroadcast(intent)
                             }
                         }
+                    } finally {
+                        sendJob.cancel() // Ensure the sending job is cancelled when the client disconnects.
+                        Log.d(TAG, "WebSocket client disconnected, jobs cancelled.")
                     }
-
-                    // Wait for both jobs to complete
-                    receiveJob.join()
-                    sendJob.join()
-                    Log.d(TAG, "WebSocket client disconnected from /screen")
-                }
-
-                get("/hello"){
-                    call.respond("hello world!!!")
                 }
             }
         }.start()
@@ -232,15 +220,12 @@ class ScreenCaptureService : Service() {
     }
 
     private fun onImageAvailable(reader: ImageReader) {
-        val image: Image? = try {
-            reader.acquireLatestImage()
+        try {
+            reader.acquireLatestImage()?.use { image ->
+                processImage(image)
+            }
         } catch (e: Exception) {
-            null
-        }
-
-        if (image != null) {
-            processImage(image)
-            image.close()
+            Log.e(TAG, "Error processing image", e)
         }
     }
 
@@ -266,8 +251,8 @@ class ScreenCaptureService : Service() {
         bitmap.recycle()
     }
 
-    fun stopCapture() {
-        Log.d(TAG, "stopCapture called")
+    private fun stopCapture() {
+        Log.d(TAG, "stopCapture called: Releasing media projection resources.")
         backgroundHandler?.post {
             virtualDisplay?.release()
             imageReader?.close()
@@ -277,10 +262,8 @@ class ScreenCaptureService : Service() {
             virtualDisplay = null
             imageReader = null
             mediaProjection = null
-            Log.d(TAG, "Capture resources released")
+            Log.d(TAG, "Capture resources released on background thread.")
         }
-        stopForeground(Service.STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     private fun startBackgroundThread() {
@@ -316,14 +299,32 @@ class ScreenCaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.d(TAG, "Service onDestroy")
-        unregisterReceiver(stateRequestReceiver)
-        stopCapture()
-        server?.stop(1_000, 2_000)
-        stopBackgroundThread()
+        Log.d(TAG, "Service onDestroy: Beginning cleanup of all resources.")
 
         isRunning = false
         sendStateBroadcast()
+
+        stopForeground(true)
+
+        // Cancel all coroutines BEFORE stopping the components they might be using.
+        serviceJob.cancel()
+        Log.d(TAG, "Service coroutine scope cancelled.")
+
+        server?.stop(1_000, 2_000)
+        Log.d(TAG, "Ktor server stopped.")
+        
+        stopCapture()
+        stopBackgroundThread()
+        Log.d(TAG, "Capture and background thread stopped.")
+
+        try {
+            unregisterReceiver(stateRequestReceiver)
+            Log.d(TAG, "State request receiver unregistered.")
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "State request receiver was not registered or already unregistered.")
+        }
+
+        Log.d(TAG, "Service fully destroyed.")
     }
 
     private fun sendStateBroadcast() {
@@ -331,7 +332,7 @@ class ScreenCaptureService : Service() {
         intent.putExtra(EXTRA_IS_RUNNING, isRunning)
         if (isRunning) {
             getLocalIpAddress()?.let {
-                val address = "ws://$it:$SERVER_PORT/screen"
+                val address = "http://$it:$SERVER_PORT"
                 intent.putExtra(EXTRA_SERVER_ADDRESS, address)
             }
         }
@@ -356,15 +357,15 @@ class ScreenCaptureService : Service() {
         const val ACTION_STOP = "com.example.screen.ACTION_STOP"
         const val ACTION_REQUEST_STATE = "com.example.screen.ACTION_REQUEST_STATE"
         const val ACTION_STATE_CHANGED = "com.example.screen.ACTION_STATE_CHANGED"
-
+        const val ACTION_PERFORM_TOUCH_COMMAND = "com.example.screen.PERFORM_TOUCH_COMMAND"
 
         const val EXTRA_IS_RUNNING = "EXTRA_IS_RUNNING"
         const val EXTRA_SERVER_ADDRESS = "EXTRA_SERVER_ADDRESS"
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_DATA = "EXTRA_DATA"
+        const val EXTRA_TOUCH_COMMAND = "EXTRA_TOUCH_COMMAND"
 
-
-        private const val SCREEN_RATIO = 0.50f
+        private const val SCREEN_RATIO = 0.48f
         private const val SERVER_PORT = 8080
 
         @Volatile

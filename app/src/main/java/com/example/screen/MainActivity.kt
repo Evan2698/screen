@@ -96,6 +96,7 @@ class MainActivity : ComponentActivity() {
                         addAction(ScreenCaptureService.ACTION_STATE_CHANGED)
                         addAction(VhostsService.ACTION_STATE_CHANGED)
                     }
+                    // Since minSdk is 29, which is lower than Tiramisu (33), this check is still valid and necessary.
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         context.registerReceiver(receiver, intentFilter, RECEIVER_NOT_EXPORTED)
                     } else {
@@ -107,9 +108,7 @@ class MainActivity : ComponentActivity() {
                         if (event == Lifecycle.Event.ON_RESUME) {
                             requestServiceState(ScreenCaptureService.ACTION_REQUEST_STATE)
                             requestServiceState(VhostsService.ACTION_REQUEST_STATE)
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
-                            }
+                            isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
                         }
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
@@ -154,20 +153,12 @@ class MainActivity : ComponentActivity() {
             putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, Activity.RESULT_OK)
             putExtra(ScreenCaptureService.EXTRA_DATA, screenCaptureData)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(screenIntent)
-        } else {
-            startService(screenIntent)
-        }
+        startForegroundService(screenIntent)
 
         val vpnIntent = Intent(this, VhostsService::class.java).apply {
             action = VhostsService.ACTION_START
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(vpnIntent)
-        } else {
-            startService(vpnIntent)
-        }
+        startForegroundService(vpnIntent)
     }
 
     private fun stopAllServices() {
@@ -216,21 +207,14 @@ fun MainScreen(
         Divider(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp))
 
         // Section 2: Accessibility Service Control
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            if (!isAccessibilityEnabled) {
-                Text(text = "Remote control is disabled.")
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = onEnableAccessibilityClick) {
-                    Text("Enable Remote Control")
-                }
-            } else {
-                Text(text = "Remote control is enabled.")
+        if (!isAccessibilityEnabled) {
+            Text(text = "Remote control is disabled.")
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = onEnableAccessibilityClick) {
+                Text("Enable Remote Control")
             }
         } else {
-            Text(
-                text = "Remote control is not supported on this device (requires Android 7.0+).",
-                textAlign = TextAlign.Center
-            )
+            Text(text = "Remote control is enabled.")
         }
     }
 }

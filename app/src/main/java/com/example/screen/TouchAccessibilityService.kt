@@ -2,25 +2,31 @@ package com.example.screen
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Path
 import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
-import androidx.annotation.RequiresApi
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 
-class TouchAccessibilityService : AccessibilityService() , Dispatcher{
-
-    private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
-    private var server = embeddedServer(Netty, port = 8081) {}
+class TouchAccessibilityService : AccessibilityService() {
 
     private var currentPath: Path? = null
+
+    private val touchCommandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ScreenCaptureService.ACTION_PERFORM_TOUCH_COMMAND) {
+                val command = intent.getStringExtra(ScreenCaptureService.EXTRA_TOUCH_COMMAND)
+                if (command != null) {
+                    Log.d(TAG, "Received touch command via broadcast: $command")
+                    handleTouchCommand(command)
+                }
+            }
+        }
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Not used for this implementation
@@ -30,18 +36,18 @@ class TouchAccessibilityService : AccessibilityService() , Dispatcher{
         Log.d(TAG, "Accessibility Service interrupted.")
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d(TAG, "Accessibility Service connected.")
-        startServer()
+        val intentFilter = IntentFilter(ScreenCaptureService.ACTION_PERFORM_TOUCH_COMMAND)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(touchCommandReceiver, intentFilter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(touchCommandReceiver, intentFilter)
+        }
     }
 
-    private fun startServer() {
-        DispatcherHolder.register(this)
-    }
-
-
-    @RequiresApi(Build.VERSION_CODES.N)
     private fun handleTouchCommand(command: String) {
         val parts = command.split(",")
         if (parts.size < 3) return
@@ -83,18 +89,9 @@ class TouchAccessibilityService : AccessibilityService() , Dispatcher{
     }
 
     override fun onDestroy() {
-        DispatcherHolder.unregister()
         super.onDestroy()
         Log.d(TAG, "Accessibility Service destroyed.")
-        server.stop(1000, 2000)
-        serviceScope.cancel()
-    }
-
-    @RequiresApi(Build.VERSION_CODES.N)
-    override fun dispatch(action: String):Int {
-        handleTouchCommand(action)
-
-        return 0
+        unregisterReceiver(touchCommandReceiver)
     }
 
     companion object {
