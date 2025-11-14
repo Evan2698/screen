@@ -159,6 +159,7 @@ class ScreenCaptureService : Service() {
                     val sendJob = launch {
                         frameFlow.collectLatest { frame ->
                             send(Frame.Binary(true, frame))
+                            Log.d(TAG, "update image")
                         }
                     }
                     
@@ -169,7 +170,7 @@ class ScreenCaptureService : Service() {
                                 val command = frame.readText()
                                 Log.d(TAG, "Received command: $command")
                                 // Broadcast the command to be handled by the accessibility service
-                                DispatcherHolder.dispatchTouchCommand(command)
+                                //DispatcherHolder.dispatchTouchCommand(command)
                             }
                         }
                     }
