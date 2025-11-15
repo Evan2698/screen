@@ -131,8 +131,10 @@ class AppController {
         this.touchController = null;
         this.imageQueue = [];
         this.animationFrameId = null;
+        this.connectionState = 'disconnected'; // 'disconnected', 'connecting', 'connected', 'disconnecting'
 
         this.#registerEvents();
+        this.#updateUI();
         this.#startDrawing();
     }
 
@@ -149,18 +151,61 @@ class AppController {
         this.#closeAllWebSockets();
     }
 
+    #setConnectionState(state) {
+        if (this.connectionState === state) return;
+        this.connectionState = state;
+        this.#updateUI();
+    }
+
+    #updateUI() {
+        switch (this.connectionState) {
+            case 'disconnected':
+                this.joinButton.textContent = 'Connect';
+                this.joinButton.disabled = false;
+                this.homeButton.style.visibility = 'hidden';
+                this.backButton.style.visibility = 'hidden';
+                break;
+            case 'connecting':
+                this.joinButton.textContent = 'Connecting...';
+                this.joinButton.disabled = true;
+                break;
+            case 'connected':
+                this.joinButton.textContent = 'Disconnect';
+                this.joinButton.disabled = false;
+                this.homeButton.style.visibility = 'visible';
+                this.backButton.style.visibility = 'visible';
+                break;
+            case 'disconnecting':
+                this.joinButton.textContent = 'Disconnecting...';
+                this.joinButton.disabled = true;
+                break;
+        }
+    }
+
     #onJoinClick() {
+        if (this.connectionState === 'disconnected') {
+            this.#connect();
+        } else if (this.connectionState === 'connected') {
+            this.#disconnect();
+        }
+    }
+
+    #connect() {
         try {
-            this.#closeAllWebSockets();
+            this.#setConnectionState('connecting');
             this.#initImageSocket();
             this.#initTouchSocket();
             this.touchController = new TouchController(this.streamCanvas, this.#sendTouchEvent.bind(this));
-            this.homeButton.style.visibility = "visible";
-            this.backButton.style.visibility = "visible";
         } catch (e) {
             console.error("Failed to start mirroring:", e);
             alert(`Error starting connection: ${e.message}`);
+            this.#setConnectionState('disconnected');
         }
+    }
+
+    #disconnect() {
+        this.#setConnectionState('disconnecting');
+        this.#closeAllWebSockets();
     }
 
     #onFullScreenClick() {
@@ -174,10 +219,18 @@ class AppController {
         const url = `ws://${window.location.host}/screen`;
         this.imageSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 8000, pongTimeout: 8000, msgType: 'arraybuffer' });
 
-        this.imageSocket.onopen = () => console.log('Image WebSocket connection established.');
+        this.imageSocket.onopen = () => {
+            console.log('Image WebSocket connection established.');
+            if (this.touchSocket && this.touchSocket.readyState === WebSocket.OPEN) {
+                this.#setConnectionState('connected');
+            }
+        };
         this.imageSocket.onmessage = (e) => this.#queueImage(e.data);
-        this.imageSocket.onclose = (e) => console.log('Image WebSocket connection closed.', e);
-        this.imageSocket.onerror = (e) => console.error('Image WebSocket error:', e);
+        this.imageSocket.onclose = () => this.#setConnectionState('disconnected');
+        this.imageSocket.onerror = (e) => {
+            console.error('Image WebSocket error:', e);
+            this.#setConnectionState('disconnected');
+        };
     }
 
     #initTouchSocket() {
@@ -185,9 +238,17 @@ class AppController {
         const url = `ws://${window.location.hostname}:8081/touch`;
         this.touchSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 8000, pongTimeout: 8000 });
 
-        this.touchSocket.onopen = () => console.log('Touch WebSocket connection established.');
-        this.touchSocket.onclose = (e) => console.log('Touch WebSocket connection closed.', e);
-        this.touchSocket.onerror = (e) => console.error('Touch WebSocket error:', e);
+        this.touchSocket.onopen = () => {
+            console.log('Touch WebSocket connection established.');
+            if (this.imageSocket && this.imageSocket.readyState === WebSocket.OPEN) {
+                this.#setConnectionState('connected');
+            }
+        };
+        this.touchSocket.onclose = () => this.#setConnectionState('disconnected');
+        this.touchSocket.onerror = (e) => {
+            console.error('Touch WebSocket error:', e);
+            this.#setConnectionState('disconnected');
+        };
     }
 
     #closeAllWebSockets() {
@@ -199,6 +260,7 @@ class AppController {
             this.touchSocket.close();
             this.touchSocket = null;
         }
+        this.#setConnectionState('disconnected');
     }
 
     #queueImage(data) {
@@ -248,9 +310,7 @@ class AppController {
     }
 
     #sendMessageToTouchSocket(message) {
-        if (this.touchSocket && this.touchSocket.readyState === WebSocket.OPEN) {
-            this.touchSocket.send(message);
-        }
+        this.touchSocket?.send(message);
     }
 }
 
