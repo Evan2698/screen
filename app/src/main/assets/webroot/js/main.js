@@ -127,9 +127,10 @@ class AppController {
 
         this.canvasContext = this.streamCanvas.getContext("2d");
         this.imageSocket = null;
+        this.touchSocket = null;
         this.touchController = null;
         this.imageQueue = [];
-        this.animationFrameId = null; // Use requestAnimationFrame for drawing
+        this.animationFrameId = null;
 
         this.#registerEvents();
         this.#startDrawing();
@@ -145,13 +146,14 @@ class AppController {
 
     #destroy() {
         this.#stopDrawing();
-        this.#closeWebSocket();
+        this.#closeAllWebSockets();
     }
 
     #onJoinClick() {
         try {
-            this.#closeWebSocket();
-            this.#initWebSocket();
+            this.#closeAllWebSockets();
+            this.#initImageSocket();
+            this.#initTouchSocket();
             this.touchController = new TouchController(this.streamCanvas, this.#sendTouchEvent.bind(this));
             this.homeButton.style.visibility = "visible";
             this.backButton.style.visibility = "visible";
@@ -167,21 +169,35 @@ class AppController {
         }
     }
 
-    #initWebSocket() {
+    #initImageSocket() {
         if (this.imageSocket) return;
         const url = `ws://${window.location.host}/screen`;
         this.imageSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 8000, pongTimeout: 8000, msgType: 'arraybuffer' });
 
-        this.imageSocket.onopen = () => console.log('WebSocket connection established.');
+        this.imageSocket.onopen = () => console.log('Image WebSocket connection established.');
         this.imageSocket.onmessage = (e) => this.#queueImage(e.data);
-        this.imageSocket.onclose = (e) => console.log('WebSocket connection closed.', e);
-        this.imageSocket.onerror = (e) => console.error('WebSocket error:', e);
+        this.imageSocket.onclose = (e) => console.log('Image WebSocket connection closed.', e);
+        this.imageSocket.onerror = (e) => console.error('Image WebSocket error:', e);
     }
 
-    #closeWebSocket() {
+    #initTouchSocket() {
+        if (this.touchSocket) return;
+        const url = `ws://${window.location.hostname}:8081/touch`;
+        this.touchSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 8000, pongTimeout: 8000 });
+
+        this.touchSocket.onopen = () => console.log('Touch WebSocket connection established.');
+        this.touchSocket.onclose = (e) => console.log('Touch WebSocket connection closed.', e);
+        this.touchSocket.onerror = (e) => console.error('Touch WebSocket error:', e);
+    }
+
+    #closeAllWebSockets() {
         if (this.imageSocket) {
             this.imageSocket.close();
             this.imageSocket = null;
+        }
+        if (this.touchSocket) {
+            this.touchSocket.close();
+            this.touchSocket = null;
         }
     }
 
@@ -224,17 +240,17 @@ class AppController {
     }
 
     #sendKey(key) {
-        this.#sendMessage(`K,${key},0`);
+        this.#sendMessageToTouchSocket(`K,${key},0`);
     }
     
     #sendTouchEvent(type, x, y) {
-        this.#sendMessage(`${type},${x},${y}`);
+        this.#sendMessageToTouchSocket(`${type},${x},${y}`);
     }
 
-    #sendMessage(message) {
-        this.imageSocket?.send(message);
-        console.log('send message:', message)
-
+    #sendMessageToTouchSocket(message) {
+        if (this.touchSocket && this.touchSocket.readyState === WebSocket.OPEN) {
+            this.touchSocket.send(message);
+        }
     }
 }
 

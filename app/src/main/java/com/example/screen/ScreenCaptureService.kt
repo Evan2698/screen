@@ -26,6 +26,7 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
+import androidx.core.graphics.createBitmap
 import io.ktor.server.application.install
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
@@ -38,7 +39,6 @@ import io.ktor.server.websocket.pingPeriod
 import io.ktor.server.websocket.timeout
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
-import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -148,7 +148,6 @@ class ScreenCaptureService : Service() {
 
                 webSocket("/screen") {
                     Log.d(TAG, "WebSocket client connected to /screen")
-
                     val sendJob = launch {
                         frameFlow.collectLatest { frame ->
                             send(Frame.Binary(true, frame))
@@ -156,20 +155,14 @@ class ScreenCaptureService : Service() {
                     }
 
                     try {
+                        // This loop is essential to detect when the client disconnects.
                         for (frame in incoming) {
-                            if (frame is Frame.Text) {
-                                val command = frame.readText()
-                                Log.d(TAG, "Received command: $command")
-                                val intent = Intent(ACTION_PERFORM_TOUCH_COMMAND).apply {
-                                    putExtra(EXTRA_TOUCH_COMMAND, command)
-                                    setPackage(packageName)
-                                }
-                                sendBroadcast(intent)
-                            }
+                            // We don't process incoming frames here, but this loop keeps the connection alive.
                         }
                     } finally {
-                        sendJob.cancel() // Ensure the sending job is cancelled when the client disconnects.
-                        Log.d(TAG, "WebSocket client disconnected, jobs cancelled.")
+                        // When the client disconnects, this block is executed.
+                        sendJob.cancel()
+                        Log.d(TAG, "Screen WebSocket client disconnected, send job cancelled.")
                     }
                 }
             }
@@ -230,25 +223,44 @@ class ScreenCaptureService : Service() {
     }
 
     private fun processImage(image: Image) {
-        val planes: Array<Image.Plane> = image.planes
-        val buffer: ByteBuffer = planes[0].buffer
-        val pixelStride: Int = planes[0].pixelStride
-        val rowStride: Int = planes[0].rowStride
-        val rowPadding: Int = rowStride - pixelStride * image.width
-        val imgWidth: Int = image.width + rowPadding / pixelStride
-        val imgHeight: Int = image.height
+        val plane = image.planes[0]
+        val buffer = plane.buffer
+        val width = image.width
+        val height = image.height
+        val pixelStride = plane.pixelStride
+        val rowStride = plane.rowStride
+        val rowPadding = rowStride - pixelStride * width
 
-        val bitmap: Bitmap = Bitmap.createBitmap(imgWidth, imgHeight, Bitmap.Config.ARGB_8888)
-        bitmap.copyPixelsFromBuffer(buffer)
-        val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+        var finalBitmap: Bitmap? = null
+        try {
+            if (rowPadding == 0) {
+                // Fast path: No padding, create one bitmap and copy directly.
+                finalBitmap = createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                finalBitmap.copyPixelsFromBuffer(buffer)
+            } else {
+                // Slow path: Padding exists. Create a temporary larger bitmap, then crop.
+                var paddedBitmap: Bitmap? = null
+                try {
+                    val paddedWidth = width + rowPadding / pixelStride
+                    paddedBitmap = createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
+                    paddedBitmap.copyPixelsFromBuffer(buffer)
+                    paddedBitmap?.let { // Use a null-safe let to handle the nullable Bitmap
+                        finalBitmap = Bitmap.createBitmap(it, 0, 0, width, height)
+                    }
+                } finally {
+                    paddedBitmap?.recycle()
+                }
+            }
 
-        ByteArrayOutputStream().use { stream ->
-            croppedBitmap.compress(Bitmap.CompressFormat.JPEG, 60, stream)
-            frameFlow.tryEmit(stream.toByteArray())
+            ByteArrayOutputStream().use { stream ->
+                finalBitmap?.compress(Bitmap.CompressFormat.JPEG, 60, stream)
+                frameFlow.tryEmit(stream.toByteArray())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to process and compress bitmap", e)
+        } finally {
+            finalBitmap?.recycle()
         }
-
-        croppedBitmap.recycle()
-        bitmap.recycle()
     }
 
     private fun stopCapture() {
@@ -357,13 +369,11 @@ class ScreenCaptureService : Service() {
         const val ACTION_STOP = "com.example.screen.ACTION_STOP"
         const val ACTION_REQUEST_STATE = "com.example.screen.ACTION_REQUEST_STATE"
         const val ACTION_STATE_CHANGED = "com.example.screen.ACTION_STATE_CHANGED"
-        const val ACTION_PERFORM_TOUCH_COMMAND = "com.example.screen.PERFORM_TOUCH_COMMAND"
 
         const val EXTRA_IS_RUNNING = "EXTRA_IS_RUNNING"
         const val EXTRA_SERVER_ADDRESS = "EXTRA_SERVER_ADDRESS"
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_DATA = "EXTRA_DATA"
-        const val EXTRA_TOUCH_COMMAND = "EXTRA_TOUCH_COMMAND"
 
         private const val SCREEN_RATIO = 0.48f
         private const val SERVER_PORT = 8080

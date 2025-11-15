@@ -3,30 +3,37 @@ package com.example.screen
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Path
 import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import io.ktor.server.application.install
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.engine.stop
+import io.ktor.server.netty.Netty
+import io.ktor.server.routing.routing
+import io.ktor.server.websocket.WebSockets
+import io.ktor.server.websocket.pingPeriod
+import io.ktor.server.websocket.timeout
+import io.ktor.server.websocket.webSocket
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import java.util.concurrent.Executors
+import kotlin.time.Duration.Companion.minutes
 
+@SuppressLint("AccessibilityPolicy")
 class TouchAccessibilityService : AccessibilityService() {
 
-    private var currentPath: Path? = null
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
+    private var server = embeddedServer(Netty, port = TOUCH_SERVER_PORT) {}
 
-    private val touchCommandReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ScreenCaptureService.ACTION_PERFORM_TOUCH_COMMAND) {
-                val command = intent.getStringExtra(ScreenCaptureService.EXTRA_TOUCH_COMMAND)
-                if (command != null) {
-                    Log.d(TAG, "Received touch command via broadcast: $command")
-                    handleTouchCommand(command)
-                }
-            }
-        }
-    }
+    private var currentPath: Path? = null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Not used for this implementation
@@ -34,17 +41,37 @@ class TouchAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         Log.d(TAG, "Accessibility Service interrupted.")
+        server.stop(1000, 2000)
+        serviceScope.cancel()
     }
 
-    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d(TAG, "Accessibility Service connected.")
-        val intentFilter = IntentFilter(ScreenCaptureService.ACTION_PERFORM_TOUCH_COMMAND)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(touchCommandReceiver, intentFilter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(touchCommandReceiver, intentFilter)
+        Log.d(TAG, "Accessibility Service connected. Starting touch server.")
+        startServer()
+    }
+
+    private fun startServer() {
+        serviceScope.launch {
+            server = embeddedServer(Netty, port = TOUCH_SERVER_PORT) {
+                install(WebSockets) {
+                    pingPeriod = 10.minutes
+                    timeout = 10.minutes
+                    maxFrameSize = Long.MAX_VALUE
+                    masking = false
+                }
+                routing {
+                    webSocket("/touch") {
+                        Log.d(TAG, "Touch WebSocket client connected.")
+                        for (frame in incoming) {
+                            if (frame is Frame.Text) {
+                                val command = frame.readText()
+                                handleTouchCommand(command)
+                            }
+                        }
+                    }
+                }
+            }.start(wait = true)
         }
     }
 
@@ -70,7 +97,6 @@ class TouchAccessibilityService : AccessibilityService() {
                 currentPath?.let {
                     val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(it, 0, 100)).build()
                     dispatchGesture(gesture, null, null)
-                    Log.d(TAG, "Dispatched gesture.")
                 }
                 currentPath = null
             }
@@ -82,7 +108,6 @@ class TouchAccessibilityService : AccessibilityService() {
                 }
                 if (action != -1) {
                     performGlobalAction(action)
-                    Log.d(TAG, "Dispatched global action: $action")
                 }
             }
         }
@@ -91,10 +116,12 @@ class TouchAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "Accessibility Service destroyed.")
-        unregisterReceiver(touchCommandReceiver)
+        server.stop(1000, 2000)
+        serviceScope.cancel()
     }
 
     companion object {
         private const val TAG = "TouchAccessibilitySvc"
+        private const val TOUCH_SERVER_PORT = 8081
     }
 }
