@@ -94,7 +94,7 @@ public class UDPOutput implements Runnable
                     vpnService.protect(outputChannel.socket());
                     try
                     {
-                        if(ipAndPort.startsWith(ConstVariable.VPN_ADDRESS)){
+                        if(ipAndPort.startsWith(VhostsService.VPN_ADDRESS)){
                             outputChannel.connect(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), destinationPort));
                         }else {
                             outputChannel.connect(new InetSocketAddress(destinationAddress, destinationPort));
@@ -104,7 +104,7 @@ public class UDPOutput implements Runnable
                     {
                         LogUtils.e(TAG, "Connection error: " + ipAndPort, e);
                         closeChannel(outputChannel);
-                        ByteBufferPool2.release(currentPacket.backingBuffer);
+                        ByteBufferPool.release(currentPacket.backingBuffer);
                         continue;
                     }
                     outputChannel.configureBlocking(false);
@@ -128,7 +128,7 @@ public class UDPOutput implements Runnable
                     channelCache.remove(ipAndPort);
                     closeChannel(outputChannel);
                 }
-                ByteBufferPool2.release(currentPacket.backingBuffer);
+                ByteBufferPool.release(currentPacket.backingBuffer);
             }
         }
         catch (InterruptedException e)

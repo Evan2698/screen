@@ -75,7 +75,7 @@ public class TCPOutput implements Runnable
 
                 ByteBuffer payloadBuffer = currentPacket.backingBuffer;
                 currentPacket.backingBuffer = null;
-                ByteBuffer responseBuffer = ByteBufferPool2.acquire();
+                ByteBuffer responseBuffer = ByteBufferPool.acquire();
 
                 InetAddress destinationAddress = currentPacket.ipHeader.destinationAddress;
 
@@ -117,8 +117,8 @@ public class TCPOutput implements Runnable
 
                 // XXX: cleanup later
                 if (responseBuffer.position() == 0)
-                    ByteBufferPool2.release(responseBuffer);
-                ByteBufferPool2.release(payloadBuffer);
+                    ByteBufferPool.release(responseBuffer);
+                ByteBufferPool.release(payloadBuffer);
             }
         }
         catch (InterruptedException e)
@@ -158,7 +158,7 @@ public class TCPOutput implements Runnable
 
             try
             {
-                if(tcb.ipAndPort.startsWith(ConstVariable.VPN_ADDRESS)){
+                if(tcb.ipAndPort.startsWith(VhostsService.VPN_ADDRESS)){
                     //走隧道, 192.168.1.244:8088
                     int localPort = destinationPort;
                     //if (localPort == 80) localPort = 8080;
@@ -388,7 +388,7 @@ public class TCPOutput implements Runnable
 
     private void closeCleanly(TCB tcb, ByteBuffer buffer)
     {
-        ByteBufferPool2.release(buffer);
+        ByteBufferPool.release(buffer);
         TCB.closeTCB(tcb);
     }
 }

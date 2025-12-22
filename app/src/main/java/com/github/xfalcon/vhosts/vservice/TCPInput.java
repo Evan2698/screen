@@ -78,7 +78,7 @@ public class TCPInput implements Runnable
                             //socket已经断开
                             LogUtils.i(TAG, tcb.ipAndPort+" has been closed.");
                             synchronized (tcb){
-                                ByteBuffer receiveBuffer = ByteBufferPool2.acquire();
+                                ByteBuffer receiveBuffer = ByteBufferPool.acquire();
                                 sendRST(tcb, 0, receiveBuffer);
                                 key.cancel();
                                 //sendFIN(tcb, receiveBuffer);
@@ -135,7 +135,7 @@ public class TCPInput implements Runnable
                 tcb.status = TCB.TCBStatus.SYN_RECEIVED;
 
                 // TODO: Set MSS for receiving larger packets from the device
-                ByteBuffer responseBuffer = ByteBufferPool2.acquire();
+                ByteBuffer responseBuffer = ByteBufferPool.acquire();
                 referencePacket.updateTCPBuffer(responseBuffer, (byte) (Packet.TCPHeader.SYN | Packet.TCPHeader.ACK),
                         tcb.mySequenceNum, tcb.myAcknowledgementNum, 0);
                 outputQueue.offer(responseBuffer);
@@ -147,7 +147,7 @@ public class TCPInput implements Runnable
         catch (IOException e)
         {
             LogUtils.e(TAG, "Connection error: " + tcb.ipAndPort, e);
-            ByteBuffer responseBuffer = ByteBufferPool2.acquire();
+            ByteBuffer responseBuffer = ByteBufferPool.acquire();
 //            referencePacket.updateTCPBuffer(responseBuffer, (byte) Packet.TCPHeader.RST, 0, tcb.myAcknowledgementNum, 0);
 //            outputQueue.offer(responseBuffer);
 //            TCB.closeTCB(tcb);
@@ -158,7 +158,7 @@ public class TCPInput implements Runnable
     private void processInput(SelectionKey key, Iterator<SelectionKey> keyIterator)
     {
         keyIterator.remove();
-        ByteBuffer receiveBuffer = ByteBufferPool2.acquire();
+        ByteBuffer receiveBuffer = ByteBufferPool.acquire();
         // Leave space for the header
 
         TCB tcb = (TCB) key.attachment();
@@ -206,7 +206,7 @@ public class TCPInput implements Runnable
 
                 if (tcb.status != TCB.TCBStatus.CLOSE_WAIT)
                 {
-                    ByteBufferPool2.release(receiveBuffer);
+                    ByteBufferPool.release(receiveBuffer);
                     return;
                 }
 

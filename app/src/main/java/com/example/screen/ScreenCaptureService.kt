@@ -253,7 +253,7 @@ class ScreenCaptureService : Service() {
             }
 
             ByteArrayOutputStream().use { stream ->
-                finalBitmap?.compress(Bitmap.CompressFormat.JPEG, 60, stream)
+                finalBitmap?.compress(Bitmap.CompressFormat.JPEG, 80, stream)
                 frameFlow.tryEmit(stream.toByteArray())
             }
         } catch (e: Exception) {
@@ -375,7 +375,7 @@ class ScreenCaptureService : Service() {
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_DATA = "EXTRA_DATA"
 
-        private const val SCREEN_RATIO = 0.48f
+        private const val SCREEN_RATIO = 0.30f
         private const val SERVER_PORT = 8080
 
         @Volatile

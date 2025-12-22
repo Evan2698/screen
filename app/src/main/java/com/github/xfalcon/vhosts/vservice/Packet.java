@@ -44,15 +44,12 @@ public class Packet {
     private boolean isTCP;
     private boolean isUDP;
 
-    public int  protocol;
-
     private final static String TAG ="VPN PACKET";
 
     public Packet(ByteBuffer buffer) throws UnknownHostException {
         byte versionAndIHL = buffer.get();
         byte version = (byte) (versionAndIHL >> 4);
         LogUtils.d("VPN PACKET", "version: " + version);
-
         if (version == 4) {
             IP_HEADER_SIZE = IP4_HEADER_SIZE;
             byte IHL = (byte) (versionAndIHL & 0x0F);
@@ -68,7 +65,6 @@ public class Packet {
             return;
         }
         LogUtils.d(TAG, "protocol: " + this.ipHeader.protocol);
-        protocol = this.ipHeader.protocol;
         if (this.ipHeader.protocol == TCP) {
             this.tcpHeader = new TCPHeader(buffer);
             this.isTCP = true;
@@ -185,7 +181,7 @@ public class Packet {
             sum += ipHeader.protocol + length;
         } else if (this.ipHeader.version == 6) {
             final int bbLength = 38; // IPv6 src + dst + nextHeader (with padding) + length 16+16+2+4
-            buffer = ByteBufferPool2.acquire();
+            buffer = ByteBufferPool.acquire();
             buffer.put(ipHeader.sourceAddress.getAddress());
             buffer.put(ipHeader.destinationAddress.getAddress());
             buffer.put((byte) 0); // padding
@@ -195,7 +191,7 @@ public class Packet {
             for (int i = 0; i < bbLength / 2; ++i) {
                 sum += 0xffff & buffer.getShort();
             }
-            ByteBufferPool2.release(buffer);
+            ByteBufferPool.release(buffer);
         }
         buffer = backingBuffer.duplicate();
         // Clear previous checksum

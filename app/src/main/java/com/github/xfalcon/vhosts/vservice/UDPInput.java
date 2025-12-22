@@ -68,7 +68,7 @@ public class UDPInput implements Runnable
                     {
                         keyIterator.remove();
 
-                        ByteBuffer receiveBuffer = ByteBufferPool2.acquire();
+                        ByteBuffer receiveBuffer = ByteBufferPool.acquire();
                         // Leave space for the header
 
 
