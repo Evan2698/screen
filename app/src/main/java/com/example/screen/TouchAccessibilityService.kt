@@ -3,9 +3,12 @@ package com.example.screen
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.Path
 import android.os.Build
+import android.util.DisplayMetrics
 import android.util.Log
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
@@ -35,6 +38,9 @@ class TouchAccessibilityService : AccessibilityService() {
 
     private var currentPath: Path? = null
 
+    private var screenWidth: Int = 1
+    private var screenHeight : Int = 1
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Not used for this implementation
     }
@@ -51,7 +57,23 @@ class TouchAccessibilityService : AccessibilityService() {
         startServer()
     }
 
+    private fun queryScreenWithHeight(){
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager.maximumWindowMetrics.bounds
+            screenWidth = bounds.width()
+            screenHeight = bounds.height()
+        } else {
+            val metrics = DisplayMetrics()
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            screenWidth = metrics.widthPixels
+            screenHeight = metrics.heightPixels
+        }
+    }
+
     private fun startServer() {
+        queryScreenWithHeight()
         serviceScope.launch {
             server = embeddedServer(Netty, port = TOUCH_SERVER_PORT) {
                 install(WebSockets) {
@@ -80,8 +102,18 @@ class TouchAccessibilityService : AccessibilityService() {
         if (parts.size < 3) return
 
         val type = parts[0]
-        val x = parts[1].toFloatOrNull() ?: return
-        val y = parts[2].toFloatOrNull() ?: return
+        val xPos = parts[1].toFloatOrNull() ?: return
+        val yPos = parts[2].toFloatOrNull() ?: return
+
+        val realWidth = screenWidth.toFloat() * ScreenCaptureService.SCREEN_RATIO
+        val realHeight = screenHeight.toFloat() * ScreenCaptureService.SCREEN_RATIO
+
+        val xFloat = xPos / realWidth *  screenWidth
+        val yFloat = yPos / realHeight * screenHeight
+
+        val x = xFloat
+        val y = yFloat
+
 
         when (type) {
             "D" -> { // Down

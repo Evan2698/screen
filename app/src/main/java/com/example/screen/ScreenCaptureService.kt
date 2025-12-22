@@ -375,7 +375,7 @@ class ScreenCaptureService : Service() {
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_DATA = "EXTRA_DATA"
 
-        private const val SCREEN_RATIO = 0.30f
+        public const val SCREEN_RATIO = 0.30f
         private const val SERVER_PORT = 8080
 
         @Volatile
