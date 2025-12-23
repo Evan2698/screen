@@ -100,21 +100,30 @@ class TouchAccessibilityService : AccessibilityService() {
     private fun handleTouchCommand(command: String) {
         val parts = command.split(",")
         if (parts.size < 3) return
+        //Log.d(TAG, "Messsage$parts")
+
+        var x = 0.0f
+        var y = 0.0f
 
         val type = parts[0]
-        val xPos = parts[1].toFloatOrNull() ?: return
-        val yPos = parts[2].toFloatOrNull() ?: return
+        if (type != "K"){
+            val xPos = parts[1].toFloatOrNull() ?: return
+            val yPos = parts[2].toFloatOrNull() ?: return
 
-        val realWidth = screenWidth.toFloat() * ScreenCaptureService.SCREEN_RATIO
-        val realHeight = screenHeight.toFloat() * ScreenCaptureService.SCREEN_RATIO
+            val xFloat = 1.0f / ScreenCaptureService.SCREEN_RATIO
+            val yFloat = 1.0f / ScreenCaptureService.SCREEN_RATIO
 
-        val xFloat = xPos / realWidth *  screenWidth
-        val yFloat = yPos / realHeight * screenHeight
+            val realWidth = xPos * xFloat
+            val realHeight = yPos * yFloat
 
-        val x = xFloat
-        val y = yFloat
+            x = realWidth
+            y = realHeight
 
+           // Log.d(TAG, "Position: x=$x, y=$y, screenX=$screenWidth, screenY=$screenHeight," +
+           //         "realW= $realWidth, realH= $realHeight")
+        }
 
+        //Log.d(TAG, "key=$type")
         when (type) {
             "D" -> { // Down
                 currentPath = Path().apply {
@@ -126,20 +135,32 @@ class TouchAccessibilityService : AccessibilityService() {
             }
             "U" -> { // Up
                 currentPath?.lineTo(x, y)
-                currentPath?.let {
-                    val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(it, 0, 100)).build()
-                    dispatchGesture(gesture, null, null)
-                }
+                //Log.d(TAG, "up action: x=$x, y=$y")
+                val gestureDescription =  GestureDescription.Builder()
+                    .addStroke(GestureDescription.StrokeDescription(currentPath!!, 0, 10))
+                    .build()
+
+                val result = dispatchGesture(gestureDescription, object :GestureResultCallback(){
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        super.onCompleted(gestureDescription)
+                        //Log.d(TAG, "onCompleted: Click..........")
+                    }
+
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        super.onCancelled(gestureDescription)
+                        //Log.d(TAG, "onCompleted: Cancel..........")
+                    }
+
+                }, null)
+
+                //Log.d(TAG, "result=$result")
                 currentPath = null
             }
             "K" -> { // Key Event (Home/Back)
-                val action = when(parts[1]){
-                    "H" -> GLOBAL_ACTION_HOME
-                    "B" -> GLOBAL_ACTION_BACK
-                    else -> -1
-                }
-                if (action != -1) {
-                    performGlobalAction(action)
+                Log.d(TAG, parts[1])
+                when(parts[1]){
+                    "H" -> performGlobalAction(GLOBAL_ACTION_HOME)
+                    "B" -> performGlobalAction(GLOBAL_ACTION_BACK)
                 }
             }
         }
