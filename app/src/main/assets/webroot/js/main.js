@@ -225,7 +225,9 @@ class AppController {
                 this.#setConnectionState('connected');
             }
         };
-        this.imageSocket.onmessage = (e) => this.#queueImage(e.data);
+        this.imageSocket.onmessage = (e) => {
+            this.#handleImage(e);
+        };
         this.imageSocket.onclose = () => this.#setConnectionState('disconnected');
         this.imageSocket.onerror = (e) => {
             console.error('Image WebSocket error:', e);
@@ -249,6 +251,9 @@ class AppController {
             console.error('Touch WebSocket error:', e);
             this.#setConnectionState('disconnected');
         };
+        this.touchSocket.onmessage = (e)=> {
+            console.log("Touch websocket: ", e.data);
+        };
     }
 
     #closeAllWebSockets() {
@@ -261,6 +266,17 @@ class AppController {
             this.touchSocket = null;
         }
         this.#setConnectionState('disconnected');
+    }
+
+    #handleImage(event){
+           const dataType = typeof event.data;
+           console.log('data type:', dataType);
+           if (dataType === 'string') {
+               // 处理字符串
+               console.log("heart beat!", event.data);
+           }else {
+              this.#queueImage(event.data);
+           }
     }
 
     #queueImage(data) {

@@ -89,6 +89,7 @@ class TouchAccessibilityService : AccessibilityService() {
                             if (frame is Frame.Text) {
                                 val command = frame.readText()
                                 handleTouchCommand(command)
+                                send(Frame.Text("heartbeat"))
                             }
                         }
                     }

@@ -158,6 +158,7 @@ class ScreenCaptureService : Service() {
                         // This loop is essential to detect when the client disconnects.
                         for (frame in incoming) {
                             // We don't process incoming frames here, but this loop keeps the connection alive.
+                            send(Frame.Text("heartbeat"))
                         }
                     } finally {
                         // When the client disconnects, this block is executed.
