@@ -132,6 +132,8 @@ class AppController {
         this.imageQueue = [];
         this.animationFrameId = null;
         this.connectionState = 'disconnected'; // 'disconnected', 'connecting', 'connected', 'disconnecting'
+        this.timerId = null;
+        this.intervalValue = 20;
 
         this.#registerEvents();
         this.#updateUI();
@@ -270,7 +272,7 @@ class AppController {
 
     #handleImage(event){
            const dataType = typeof event.data;
-           console.log('data type:', dataType);
+           //console.log('data type:', dataType);
            if (dataType === 'string') {
                // 处理字符串
                console.log("heart beat!", event.data);
@@ -287,14 +289,12 @@ class AppController {
     }
 
     #startDrawing() {
-        this.#drawLoop();
+        this.timerId = setInterval(this.#drawLoop.bind(this), this.intervalValue);
     }
 
     #stopDrawing() {
-        if (this.animationFrameId) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
-        }
+        clearInterval(this.timerId);
+        this.timerId = null;
     }
 
     #drawLoop() {
