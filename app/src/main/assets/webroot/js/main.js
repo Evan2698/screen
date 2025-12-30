@@ -218,7 +218,7 @@ class AppController {
     #initImageSocket() {
         if (this.imageSocket) return;
         const url = `ws://${window.location.host}/screen`;
-        this.imageSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 8000, pongTimeout: 8000, msgType: 'arraybuffer' });
+        this.imageSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 15000, pongTimeout: 15000, msgType: 'arraybuffer' });
 
         this.imageSocket.onopen = () => {
             console.log('Image WebSocket connection established.');
@@ -239,7 +239,7 @@ class AppController {
     #initTouchSocket() {
         if (this.touchSocket) return;
         const url = `ws://${window.location.hostname}:8081/touch`;
-        this.touchSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 8000, pongTimeout: 8000 });
+        this.touchSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 15000, pongTimeout: 15000 });
 
         this.touchSocket.onopen = () => {
             console.log('Touch WebSocket connection established.');
