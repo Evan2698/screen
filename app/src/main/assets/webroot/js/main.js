@@ -231,7 +231,7 @@ class AppController {
         };
         this.imageSocket.onclose = () => this.#setConnectionState('disconnected');
         this.imageSocket.onerror = (e) => {
-            console.error('Image WebSocket error:', e);
+            console.log('Image WebSocket error:', e);
             this.#setConnectionState('disconnected');
         };
     }
@@ -249,7 +249,7 @@ class AppController {
         };
         this.touchSocket.onclose = () => this.#setConnectionState('disconnected');
         this.touchSocket.onerror = (e) => {
-            console.error('Touch WebSocket error:', e);
+            console.log('Touch WebSocket error:', e);
             this.#setConnectionState('disconnected');
         };
         this.touchSocket.onmessage = (e)=> {
