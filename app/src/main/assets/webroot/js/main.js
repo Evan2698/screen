@@ -133,7 +133,6 @@ class AppController {
         this.animationFrameId = null;
         this.connectionState = 'disconnected'; // 'disconnected', 'connecting', 'connected', 'disconnecting'
         this.timerId = null;
-        this.intervalValue = 20;
 
         this.#registerEvents();
         this.#updateUI();
@@ -284,17 +283,20 @@ class AppController {
     #queueImage(data) {
         if (this.imageQueue.length > 5) {
             this.imageQueue = []; // Drop frames to reduce latency
+            console.log(" Drop frames to reduce latency");
         }
         this.imageQueue.push(new Blob([data], { type: "image/jpeg" }));
     }
 
     #startDrawing() {
-        this.timerId = setInterval(this.#drawLoop.bind(this), this.intervalValue);
+        this.#drawLoop();
     }
 
     #stopDrawing() {
-        clearInterval(this.timerId);
-        this.timerId = null;
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
     }
 
     #drawLoop() {
