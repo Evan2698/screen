@@ -133,6 +133,7 @@ class AppController {
         this.animationFrameId = null;
         this.connectionState = 'disconnected'; // 'disconnected', 'connecting', 'connected', 'disconnecting'
         this.timerId = null;
+        this.intervalValue = 30;
 
         this.#registerEvents();
         this.#updateUI();
@@ -289,19 +290,18 @@ class AppController {
     }
 
     #startDrawing() {
-        this.#drawLoop();
+        if (!this.timerId){
+          this.timerId = setInterval(this.#drawLoop.bind(this), this.intervalValue);
+        }
     }
 
     #stopDrawing() {
-        if (this.animationFrameId) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
-        }
+        clearInterval(this.timerId);
+        this.timerId = null;
     }
 
     #drawLoop() {
         this.#drawImage();
-        this.animationFrameId = requestAnimationFrame(this.#drawLoop.bind(this));
     }
 
     async #drawImage() {
