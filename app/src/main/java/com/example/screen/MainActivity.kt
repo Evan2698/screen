@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -198,7 +199,7 @@ fun MainScreen(
         Spacer(modifier = Modifier.height(16.dp))
         if (isAnyServiceRunning && serverAddress != null) {
             Text(text = "Screen running at:")
-            Text(text = serverAddress)
+            Text(text = serverAddress,  textAlign = TextAlign.Center)
         } else {
             Text(text = "All services are stopped.")
         }
