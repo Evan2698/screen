@@ -415,7 +415,7 @@ class ScreenCaptureService : Service() {
         intent.putExtra(EXTRA_IS_RUNNING, isRunning)
         if (isRunning) {
             getLocalIpAddress()?.let {
-                val address = "http://$it:$SERVER_PORT"
+                val address = "http://9.9.9.9:8080/ or http://$it:$SERVER_PORT"
                 intent.putExtra(EXTRA_SERVER_ADDRESS, address)
             }
         }

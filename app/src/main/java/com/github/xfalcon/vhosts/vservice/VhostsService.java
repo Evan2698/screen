@@ -28,6 +28,7 @@ import android.net.Network;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
+import android.system.OsConstants;
 import android.util.Log;
 
 
@@ -69,6 +70,7 @@ public class VhostsService extends VpnService {
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
     private ParcelFileDescriptor vpnInterface = null;
+    private ParcelFileDescriptor vpnTrickInterface = null;
     private PendingIntent pendingIntent;
     private ConcurrentLinkedQueue<Packet> deviceToNetworkUDPQueue;
     private ConcurrentLinkedQueue<Packet> deviceToNetworkTCPQueue;
@@ -113,10 +115,16 @@ public class VhostsService extends VpnService {
             return true;
         }
         Builder builder = new Builder();
+//        builder.addAddress(VPN_ADDRESS, 32);
+//        builder.addAddress(VPN_ADDRESS6, 128);
+//        builder.addRoute(VPN_ROUTE, 0);
+//        builder.addRoute(VPN_ROUTE6, 0);
         builder.addAddress(VPN_ADDRESS, 32);
-        builder.addAddress(VPN_ADDRESS6, 128);
-        builder.addRoute(VPN_ROUTE, 0);
-        builder.addRoute(VPN_ROUTE6, 0);
+        builder.addRoute(VPN_ADDRESS, 32);
+        builder.setMtu(1500);
+        builder.allowBypass();
+        builder.allowFamily(OsConstants.AF_INET);
+        builder.allowFamily(OsConstants.AF_INET6);
 
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         Network[] networks = cm.getAllNetworks();
@@ -142,6 +150,16 @@ public class VhostsService extends VpnService {
             }
         }
         vpnInterface = builder.setSession(getString(R.string.app_name)).setConfigureIntent(pendingIntent).establish();
+
+
+        // 这是一个trick 的方法，利用了热点每次开启的时候，在192这个网段，增加了一个路由，这个是因为android 系统不完善的
+        // 所导致的，并不是一个好的办法，也不是一个正规的办法。但是能用
+        this.vpnTrickInterface = new VpnService.Builder().addAddress("192.168.229.0", 24)
+                .addRoute("192.168.229.0", 24).setMtu(1500)
+                .allowBypass().allowFamily(OsConstants.AF_INET)
+                .allowFamily(OsConstants.AF_INET6)
+                .setSession("Screen 2").establish();
+
         return vpnInterface != null;
     }
 
@@ -226,6 +244,8 @@ public class VhostsService extends VpnService {
         networkToDeviceQueue = null;
         ByteBufferPool.clear();
         closeResources(udpSelector, tcpSelector, vpnInterface);
+        closeResources(vpnTrickInterface);
+        vpnTrickInterface = null;
         vpnInterface = null;
         udpSelectorLock = null;
         tcpSelectorLock = null;
