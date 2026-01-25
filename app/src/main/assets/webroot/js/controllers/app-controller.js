@@ -20,7 +20,7 @@ export default class AppController {
         this.animationFrameId = null;
         this.connectionState = 'disconnected'; // 'disconnected', 'connecting', 'connected', 'disconnecting'
         this._lastFrameTime = 0;
-        this.intervalValue = 30;
+        this.intervalValue = 16; // < 16.67 , indicate use fps of api requestAnimationFrame,  about is 60 fps
 
         this.#registerEvents();
         this.#updateUI();
