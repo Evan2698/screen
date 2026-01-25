@@ -11,5 +11,4 @@
 
 
 本程序在特斯拉model y 2023-2025 上都测试过，可以正常工作。
- ![投屏后效果](screenshot/screen2.png)
- ![手机app打开界面](screenshot/screen.jpg)
+ ![投屏后效果](screenshot/screen2.png) ![手机app打开界面](screenshot/screen.jpg)
