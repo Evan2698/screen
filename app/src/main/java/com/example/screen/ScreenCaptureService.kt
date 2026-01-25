@@ -39,12 +39,14 @@ import io.ktor.server.websocket.pingPeriod
 import io.ktor.server.websocket.timeout
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
+import io.ktor.websocket.Frame.*
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -57,11 +59,16 @@ import java.util.LinkedList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.collect
 
 class ScreenCaptureService : Service() {
 
     private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
+
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
     private var mediaProjection: MediaProjection? = null
@@ -72,14 +79,16 @@ class ScreenCaptureService : Service() {
     private var handlerThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
 
-    //private val frameFlow = MutableSharedFlow<ByteArray>(replay = 1)
-    private var server: EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration>? = null
 
-    private val connections = Collections.synchronizedSet<WSConnection?>(LinkedHashSet())
-    private val imageQueue = LinkedBlockingQueue<ByteArray>(500)
+    private var server: WebServer? = null
+
+    private val _imageQueue =  MutableSharedFlow<ByteArray>(replay = 0, 3, BufferOverflow.DROP_OLDEST)
+    private val frameFlow = _imageQueue.asSharedFlow()
 
 
     private var interruptThread: Boolean = false
+
+
 
     private val stateRequestReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -106,7 +115,6 @@ class ScreenCaptureService : Service() {
 
         startBackgroundThread()
         createNotificationChannel()
-        startDispatchThread()
         startKtorServer()
 
         val intentFilter = IntentFilter(ACTION_REQUEST_STATE)
@@ -146,97 +154,49 @@ class ScreenCaptureService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun startDispatchThread(){
-        this.interruptThread = false
-        Thread{
-            while (!this.interruptThread){
-                val count = imageQueue.size
-                val imageList = LinkedList<ByteArray>()
-                if (count > 0){
-                    var index : Int = 0
-                    while (index < count) {
-                        imageList.add(imageQueue.take())
-                        ++index
-                    }
-                } else{
-                    val image = imageQueue.poll(100, TimeUnit.MILLISECONDS) ?: continue
-                    imageList.add(image)
-                }
-               dispatchImageToWebsockets(imageList, this.connections)
-            }
 
-        }.start()
 
-    }
-    @OptIn(DelicateCoroutinesApi::class)
-    private fun dispatchImageToWebsockets(queue: List<ByteArray>, imageQueue : Set<WSConnection?>)
-    {
-        GlobalScope.launch(CoroutineExceptionHandler { _, throwable ->
-            Log.d(TAG, throwable.message.toString())
-        }) {
-            for (image in queue){
-                for (item in imageQueue) {
-                    try {
-                        item!!.session.send(Frame.Binary(true, image))
-                    } catch (e: Exception) {
-                        Log.d(TAG, "websocket send internal: ", e)
-                    }
-                }
-            }
-        }
-    }
 
-//    @OptIn(DelicateCoroutinesApi::class)
-//    private fun notifiedEveryWebsocket(
-//        item: WSConnection,
-//        data: ByteArray
-//    ) {
-//        GlobalScope.launch(CoroutineExceptionHandler { _, throwable ->
-//            Log.d(TAG, throwable.message.toString())
-//        }) {
-//            try {
-//                item.session.send(Frame.Binary(true, data))
-//            } catch (e: Exception) {
-//                Log.d(TAG, "websocket send internal: ", e)
-//            }
-//        }
-//    }
 
     private fun startKtorServer() {
         Log.d(TAG, "Starting Ktor server...")
-        server = embeddedServer(Netty, port = SERVER_PORT) {
-            install(WebSockets) {
-                pingPeriod = 25.seconds
-                timeout = 25.seconds
-                maxFrameSize = Long.MAX_VALUE
-                masking = false
-            }
-            routing {
-                staticResources("/", "assets/webroot") {
-                    default("index.html")
-                }
-
-                webSocket("/screen") {
-                    Log.d(TAG, "WebSocket client connected to /screen")
-                    val thisConnection = WSConnection(this)
-                    connections += thisConnection
-
-                    try {
-                        // This loop is essential to detect when the client disconnects.
-                        for (frame in incoming) {
-                            // We don't process incoming frames here, but this loop keeps the connection alive.
-                            send(Frame.Text("heartbeat"))
-                        }
-                    } finally {
-                        // When the client disconnects, this block is executed.
-                        Log.w(TAG,"Removing socket and clear the environment variables")
-                        connections -= thisConnection
-                        Log.d(TAG, "Screen WebSocket client disconnected, send job cancelled.")
-                    }
-                }
-            }
-        }.start()
+        server = WebServer(onConnect = { incoming, outgoing ->
+            handleWebSocketConnection(incoming, outgoing)
+        })
+        server!!.start()
         Log.d(TAG, "Ktor server started on port $SERVER_PORT")
+    }
+
+
+    private suspend fun handleWebSocketConnection(incoming: ReceiveChannel<Frame>, outgoing: SendChannel<Frame>) {
+
+        coroutineScope {
+            // job 1
+            launch {
+                try {
+                    for (frame in incoming) {
+                        if (frame is Frame.Text) {
+                            // Directly send the heartbeat; send is a suspend function
+                            outgoing.send(Frame.Text(WebServer.HEART_BEAT))
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Handle connection resets or closures gracefully
+                    Log.d(TAG, "exception in job1", e)
+                }
+            }
+
+            // job2
+            launch {
+                try {
+                    frameFlow.collect{
+                        image -> outgoing.send(Frame.Binary(true, image))
+                    }
+                }catch (e: Exception){
+                    Log.d(TAG, "exception in job2", e)
+                }
+            }
+        }
     }
 
     @SuppressLint("DEPRECATION")
@@ -323,8 +283,7 @@ class ScreenCaptureService : Service() {
 
             ByteArrayOutputStream().use { stream ->
                 finalBitmap?.compress(Bitmap.CompressFormat.JPEG, 80, stream)
-                //frameFlow.tryEmit(stream.toByteArray())
-                imageQueue.put(stream.toByteArray())
+                _imageQueue.tryEmit(stream.toByteArray())
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to process and compress bitmap", e)
@@ -393,7 +352,7 @@ class ScreenCaptureService : Service() {
         serviceJob.cancel()
         Log.d(TAG, "Service coroutine scope cancelled.")
 
-        server?.stop(1_000, 2_000)
+        server?.stop()
         Log.d(TAG, "Ktor server stopped.")
         
         stopCapture()
@@ -415,7 +374,12 @@ class ScreenCaptureService : Service() {
         intent.putExtra(EXTRA_IS_RUNNING, isRunning)
         if (isRunning) {
             getLocalIpAddress()?.let {
-                val address = "http://9.9.9.9:8080/ or http://$it:$SERVER_PORT"
+                var address = "http://$it:$SERVER_PORT/"
+                if (URL_ADDRESS.startsWith(address)){
+                    address = URL_ADDRESS
+                } else {
+                    address  += " or $URL_ADDRESS"
+                }
                 intent.putExtra(EXTRA_SERVER_ADDRESS, address)
             }
         }
@@ -445,6 +409,8 @@ class ScreenCaptureService : Service() {
         const val EXTRA_SERVER_ADDRESS = "EXTRA_SERVER_ADDRESS"
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_DATA = "EXTRA_DATA"
+
+        const val URL_ADDRESS = "http://9.9.9.9:8080/"
 
         public const val SCREEN_RATIO = 0.30f
         private const val SERVER_PORT = 8080
