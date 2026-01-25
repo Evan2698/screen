@@ -27,7 +27,7 @@ export default class AppController {
         this._fps = 0;
         this._fpsLastTime = performance.now();
         this._fpsFrameCounter = 0;
-        this.showFps = true;
+        this.showFps = false;
 
         this.#registerEvents();
         this.#updateUI();
