@@ -21,6 +21,7 @@ export default class AppController {
         this.connectionState = 'disconnected'; // 'disconnected', 'connecting', 'connected', 'disconnecting'
         this._lastFrameTime = 0;
         this.intervalValue = 16; // < 16.67 , indicate use fps of api requestAnimationFrame,  about is 60 fps
+        this.frameCount = 5;  // frame threshold
 
         this.#registerEvents();
         this.#updateUI();
@@ -167,7 +168,7 @@ export default class AppController {
     }
 
     #queueImage(data) {
-        if (this.imageQueue.length > 5) {
+        if (this.imageQueue.length > this.frameCount) {
             this.imageQueue = []; // Drop frames to reduce latency
             console.log(" Drop frames to reduce latency");
         }
