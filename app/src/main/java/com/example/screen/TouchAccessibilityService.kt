@@ -57,11 +57,12 @@ class TouchAccessibilityService : AccessibilityService() {
         startServer()
     }
 
+    @Suppress("DEPRECATION")
     private fun queryScreenWithHeight(){
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.maximumWindowMetrics.bounds
+            val bounds = windowManager.currentWindowMetrics.bounds
             screenWidth = bounds.width()
             screenHeight = bounds.height()
         } else {

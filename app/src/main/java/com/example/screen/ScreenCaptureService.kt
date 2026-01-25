@@ -199,7 +199,7 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    @SuppressLint("DEPRECATION")
+    @Suppress("DEPRECATION")
     private fun startCapture(resultCode: Int, data: Intent) {
         Log.d(TAG, "startCapture called")
         mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
@@ -210,7 +210,7 @@ class ScreenCaptureService : Service() {
         val density: Int
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = windowManager.maximumWindowMetrics.bounds
+            val bounds = windowManager.currentWindowMetrics.bounds
             width = bounds.width()
             height = bounds.height()
             density = resources.configuration.densityDpi
@@ -346,7 +346,7 @@ class ScreenCaptureService : Service() {
         isRunning = false
         sendStateBroadcast()
 
-        stopForeground(true)
+        stopForeground(Service.STOP_FOREGROUND_REMOVE)
 
         // Cancel all coroutines BEFORE stopping the components they might be using.
         serviceJob.cancel()
