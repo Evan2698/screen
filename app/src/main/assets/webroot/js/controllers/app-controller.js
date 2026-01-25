@@ -10,6 +10,7 @@ export default class AppController {
         this.fullScreenButton = document.getElementById("fullscreen");
         this.homeButton = document.getElementById("home");
         this.backButton = document.getElementById("back");
+        this.toggleFpsButton = document.getElementById("toggle-fps");
         this.streamCanvas = document.getElementById("screen");
 
         this.canvasContext = this.streamCanvas.getContext("2d");
@@ -22,6 +23,11 @@ export default class AppController {
         this._lastFrameTime = 0;
         this.intervalValue = 16; // < 16.67 , indicate use fps of api requestAnimationFrame,  about is 60 fps
         this.frameCount = 5;  // frame threshold
+        // FPS tracking
+        this._fps = 0;
+        this._fpsLastTime = performance.now();
+        this._fpsFrameCounter = 0;
+        this.showFps = true;
 
         this.#registerEvents();
         this.#updateUI();
@@ -33,6 +39,13 @@ export default class AppController {
         this.fullScreenButton.addEventListener("click", this.#onFullScreenClick.bind(this));
         this.homeButton.addEventListener("click", () => this.#sendKey("H"));
         this.backButton.addEventListener("click", () => this.#sendKey("B"));
+        if (this.toggleFpsButton) {
+            this.toggleFpsButton.addEventListener('click', () => {
+                this.showFps = !this.showFps;
+                this.toggleFpsButton.textContent = this.showFps ? 'FPS: On' : 'FPS: Off';
+            });
+            this.toggleFpsButton.textContent = this.showFps ? 'FPS: On' : 'FPS: Off';
+        }
         window.onbeforeunload = this.#destroy.bind(this);
     }
 
@@ -201,7 +214,7 @@ export default class AppController {
 
     async #drawImage() {
         const blob = this.imageQueue.shift();
-        if (!blob) return;
+        if (!blob) return false;
 
         try {
             const imageBitmap = await createImageBitmap(blob);
@@ -209,8 +222,28 @@ export default class AppController {
             this.streamCanvas.height = imageBitmap.height;
             this.canvasContext.drawImage(imageBitmap, 0, 0);
             imageBitmap.close();
+
+            // FPS counting
+            const now = performance.now();
+            this._fpsFrameCounter = (this._fpsFrameCounter || 0) + 1;
+            if (!this._fpsLastTime) this._fpsLastTime = now;
+            if (now - this._fpsLastTime >= 1000) {
+                this._fps = this._fpsFrameCounter;
+                this._fpsFrameCounter = 0;
+                this._fpsLastTime = now;
+            }
+
+            if (this.showFps) {
+                this.canvasContext.save();
+                this.canvasContext.fillStyle = 'lime';
+                this.canvasContext.font = '16px sans-serif';
+                this.canvasContext.fillText(`${this._fps} fps`, 10, 20);
+                this.canvasContext.restore();
+            }
+            return true;
         } catch (e) {
             console.error("Failed to draw image:", e);
+            return false;
         }
     }
 
