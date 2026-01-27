@@ -68,8 +68,8 @@ class ScreenCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service onCreate")
-        mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         startBackgroundThread()
         createNotificationChannel()
@@ -197,7 +197,7 @@ class ScreenCaptureService : Service() {
                     val paddedWidth = width + rowPadding / pixelStride
                     paddedBitmap = createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
                     paddedBitmap.copyPixelsFromBuffer(buffer)
-                    paddedBitmap?.let { // Use a null-safe let to handle the nullable Bitmap
+                    paddedBitmap.let { // Use a null-safe let to handle the nullable Bitmap
                         finalBitmap = Bitmap.createBitmap(it, 0, 0, width, height)
                     }
                 } finally {
@@ -273,7 +273,7 @@ class ScreenCaptureService : Service() {
         isRunning = false
         sendStateBroadcast()
 
-        stopForeground(Service.STOP_FOREGROUND_REMOVE)
+        stopForeground(STOP_FOREGROUND_REMOVE)
 
         server?.stop()
         Log.d(TAG, "Web server stopped.")
@@ -286,7 +286,7 @@ class ScreenCaptureService : Service() {
             unregisterReceiver(stateRequestReceiver)
             Log.d(TAG, "State request receiver unregistered.")
         } catch (e: IllegalArgumentException) {
-            Log.w(TAG, "State request receiver was not registered or already unregistered.")
+            Log.w(TAG, "State request receiver was not registered or already unregistered.", e)
         }
 
         Log.d(TAG, "Service fully destroyed.")

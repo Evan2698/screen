@@ -97,7 +97,9 @@ class TouchAccessibilityService : AccessibilityService() {
                 }
             }
 
-            override fun onPong(pong: WebSocketFrame) {}
+            override fun onPong(pong: WebSocketFrame) {
+                Log.d(TAG, "Pong received from client:")
+            }
 
             override fun onException(exception: IOException) {
                 Log.e(TAG, "Touch WebSocket exception", exception)
