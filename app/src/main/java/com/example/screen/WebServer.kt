@@ -66,6 +66,7 @@ class WebServer(
                     }
                 } catch (e: InterruptedException) {
                     Thread.currentThread().interrupt()
+                    Log.d(TAG, "WebSocket thread interrupted", e)
                 } catch (e: IOException) {
                     Log.e(TAG, "Error sending frame, closing connection", e)
                 }
@@ -94,7 +95,7 @@ class WebServer(
         }
 
         override fun onPong(pong: WebSocketFrame) {
-            Log.d(TAG, "Pong received from client")
+            Log.d(TAG, "Pong received from client $pong")
         }
 
         override fun onException(exception: IOException) {

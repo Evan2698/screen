@@ -3,7 +3,6 @@ package com.example.screen
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
-import android.content.Context
 import android.graphics.Path
 import android.os.Build
 import android.util.DisplayMetrics
@@ -11,7 +10,6 @@ import android.util.Log
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import fi.iki.elonen.NanoWSD
-
 import java.io.IOException
 
 @SuppressLint("AccessibilityPolicy")
@@ -41,7 +39,7 @@ class TouchAccessibilityService : AccessibilityService() {
 
     @Suppress("DEPRECATION")
     private fun queryScreenWithHeight() {
-        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val bounds = windowManager.currentWindowMetrics.bounds
@@ -98,7 +96,7 @@ class TouchAccessibilityService : AccessibilityService() {
             }
 
             override fun onPong(pong: WebSocketFrame) {
-                Log.d(TAG, "Pong received from client:")
+                Log.d(TAG, "Pong received from client:${pong}")
             }
 
             override fun onException(exception: IOException) {
