@@ -10,36 +10,19 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import io.ktor.server.application.install
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.engine.stop
-import io.ktor.server.netty.Netty
-import io.ktor.server.routing.routing
-import io.ktor.server.websocket.WebSockets
-import io.ktor.server.websocket.pingPeriod
-import io.ktor.server.websocket.timeout
-import io.ktor.server.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.readText
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import java.util.concurrent.Executors
-import kotlin.time.Duration.Companion.minutes
+import fi.iki.elonen.NanoWSD
+
+import java.io.IOException
 
 @SuppressLint("AccessibilityPolicy")
 class TouchAccessibilityService : AccessibilityService() {
 
-    private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
-    private var server = embeddedServer(Netty, port = TOUCH_SERVER_PORT) {}
+    private var server: TouchWebServer? = null
 
     private var currentPath: Path? = null
 
     private var screenWidth: Int = 1
-    private var screenHeight : Int = 1
+    private var screenHeight: Int = 1
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // Not used for this implementation
@@ -47,8 +30,7 @@ class TouchAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         Log.d(TAG, "Accessibility Service interrupted.")
-        server.stop(1000, 2000)
-        serviceScope.cancel()
+        server?.stop()
     }
 
     override fun onServiceConnected() {
@@ -58,7 +40,7 @@ class TouchAccessibilityService : AccessibilityService() {
     }
 
     @Suppress("DEPRECATION")
-    private fun queryScreenWithHeight(){
+    private fun queryScreenWithHeight() {
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -75,43 +57,63 @@ class TouchAccessibilityService : AccessibilityService() {
 
     private fun startServer() {
         queryScreenWithHeight()
-        serviceScope.launch {
-            server = embeddedServer(Netty, port = TOUCH_SERVER_PORT) {
-                install(WebSockets) {
-                    pingPeriod = 10.minutes
-                    timeout = 10.minutes
-                    maxFrameSize = Long.MAX_VALUE
-                    masking = false
-                }
-                routing {
-                    webSocket("/touch") {
-                        Log.d(TAG, "Touch WebSocket client connected.")
-                        for (frame in incoming) {
-                            if (frame is Frame.Text) {
-                                val command = frame.readText()
-                                if (command.startsWith(WebServer.HEART_BEAT)){
-                                    send(Frame.Text(WebServer.HEART_BEAT))
-                                } else {
-                                    handleTouchCommand(command)
-                                }
-                            }
-                        }
+        server = TouchWebServer(TOUCH_SERVER_PORT)
+        try {
+            server?.start(0, false)
+            Log.d(TAG, "Touch server started on port $TOUCH_SERVER_PORT")
+        } catch (e: IOException) {
+            Log.e(TAG, "Failed to start touch server", e)
+        }
+    }
+
+    private inner class TouchWebServer(port: Int) : NanoWSD(port) {
+        override fun openWebSocket(session: IHTTPSession): WebSocket {
+            return TouchSocket(session)
+        }
+
+        private inner class TouchSocket(session: IHTTPSession) : WebSocket(session) {
+            override fun onOpen() {
+                Log.d(TAG, "Touch WebSocket client connected.")
+            }
+
+            override fun onClose(
+                code: WebSocketFrame.CloseCode,
+                reason: String?,
+                initiatedByRemote: Boolean
+            ) {
+                Log.d(TAG, "Touch WebSocket client disconnected.")
+            }
+
+            override fun onMessage(message: WebSocketFrame) {
+                val command = message.textPayload
+                if (command.startsWith(WebServer.HEART_BEAT)) {
+                    try {
+                        send(WebServer.HEART_BEAT)
+                    } catch (e: IOException) {
+                        Log.e(TAG, "Error sending heartbeat", e)
                     }
+                } else {
+                    handleTouchCommand(command)
                 }
-            }.start(wait = true)
+            }
+
+            override fun onPong(pong: WebSocketFrame) {}
+
+            override fun onException(exception: IOException) {
+                Log.e(TAG, "Touch WebSocket exception", exception)
+            }
         }
     }
 
     private fun handleTouchCommand(command: String) {
         val parts = command.split(",")
         if (parts.size < 3) return
-        //Log.d(TAG, "Messsage$parts")
 
         var x = 0.0f
         var y = 0.0f
 
         val type = parts[0]
-        if (type != "K"){
+        if (type != "K") {
             val xPos = parts[1].toFloatOrNull() ?: return
             val yPos = parts[2].toFloatOrNull() ?: return
 
@@ -123,12 +125,8 @@ class TouchAccessibilityService : AccessibilityService() {
 
             x = realWidth
             y = realHeight
-
-           // Log.d(TAG, "Position: x=$x, y=$y, screenX=$screenWidth, screenY=$screenHeight," +
-           //         "realW= $realWidth, realH= $realHeight")
         }
 
-        //Log.d(TAG, "key=$type")
         when (type) {
             "D" -> { // Down
                 currentPath = Path().apply {
@@ -140,30 +138,16 @@ class TouchAccessibilityService : AccessibilityService() {
             }
             "U" -> { // Up
                 currentPath?.lineTo(x, y)
-                //Log.d(TAG, "up action: x=$x, y=$y")
-                val gestureDescription =  GestureDescription.Builder()
+                val gestureDescription = GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(currentPath!!, 0, 10))
                     .build()
 
-                val result = dispatchGesture(gestureDescription, object :GestureResultCallback(){
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        super.onCompleted(gestureDescription)
-                        //Log.d(TAG, "onCompleted: Click..........")
-                    }
-
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        super.onCancelled(gestureDescription)
-                        //Log.d(TAG, "onCompleted: Cancel..........")
-                    }
-
-                }, null)
-
-                //Log.d(TAG, "result=$result")
+                dispatchGesture(gestureDescription, null, null)
                 currentPath = null
             }
             "K" -> { // Key Event (Home/Back)
                 Log.d(TAG, parts[1])
-                when(parts[1]){
+                when (parts[1]) {
                     "H" -> performGlobalAction(GLOBAL_ACTION_HOME)
                     "B" -> performGlobalAction(GLOBAL_ACTION_BACK)
                 }
@@ -174,8 +158,7 @@ class TouchAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "Accessibility Service destroyed.")
-        server.stop(1000, 2000)
-        serviceScope.cancel()
+        server?.stop()
     }
 
     companion object {

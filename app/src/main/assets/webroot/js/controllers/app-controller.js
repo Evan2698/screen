@@ -122,8 +122,8 @@ export default class AppController {
         const url = `ws://${window.location.host}/screen`;
         this.imageSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 15000, pongTimeout: 15000, msgType: 'arraybuffer' });
 
-        this.imageSocket.onopen = () => {
-            console.log('Image WebSocket connection established.');
+        this.imageSocket.onopen = (e) => {
+            console.log('Image WebSocket connection established.', e);
             if (this.touchSocket && this.touchSocket.readyState === WebSocket.OPEN) {
                 this.#setConnectionState('connected');
             }
@@ -131,7 +131,10 @@ export default class AppController {
         this.imageSocket.onmessage = (e) => {
             this.#handleImage(e);
         };
-        this.imageSocket.onclose = () => this.#setConnectionState('disconnected');
+        this.imageSocket.onclose = (e) => {
+            console.log('Image WebSocket closed:', e);
+            this.#setConnectionState('disconnected');
+        }
         this.imageSocket.onerror = (e) => {
             console.log('Image WebSocket error:', e);
             this.#setConnectionState('disconnected');

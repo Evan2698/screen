@@ -13,7 +13,7 @@ android {
         minSdk = 29
         targetSdk = 34
         versionCode = 1
-        versionName = "2.6"
+        versionName = "2.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -61,13 +61,6 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 
-    // Ktor
-    val ktor_version = "3.3.2"
-    implementation("io.ktor:ktor-server-core:${ktor_version}")
-    implementation("io.ktor:ktor-server-netty:${ktor_version}")
-    implementation("io.ktor:ktor-server-websockets:${ktor_version}")
-
-
     // Jetpack Compose
     implementation(platform("androidx.compose:compose-bom:2023.08.00"))
     implementation("androidx.compose.ui:ui")
@@ -75,6 +68,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
+    implementation("org.nanohttpd:nanohttpd-websocket:2.3.1")
 
 }

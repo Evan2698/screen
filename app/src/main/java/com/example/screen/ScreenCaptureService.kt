@@ -27,48 +27,13 @@ import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.createBitmap
-import io.ktor.server.application.install
-import io.ktor.server.engine.EmbeddedServer
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.http.content.staticResources
-import io.ktor.server.netty.Netty
-import io.ktor.server.netty.NettyApplicationEngine
-import io.ktor.server.routing.routing
-import io.ktor.server.websocket.WebSockets
-import io.ktor.server.websocket.pingPeriod
-import io.ktor.server.websocket.timeout
-import io.ktor.server.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.Frame.*
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import java.nio.ByteBuffer
-import java.util.Collections
-import java.util.LinkedList
 import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
-import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.channels.ReceiveChannel
-import kotlinx.coroutines.channels.SendChannel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.collect
 
 class ScreenCaptureService : Service() {
-
-    private val serviceJob = SupervisorJob()
-
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
     private var mediaProjection: MediaProjection? = null
@@ -79,16 +44,9 @@ class ScreenCaptureService : Service() {
     private var handlerThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
 
-
     private var server: WebServer? = null
 
-    private val _imageQueue =  MutableSharedFlow<ByteArray>(replay = 0, 3, BufferOverflow.DROP_OLDEST)
-    private val frameFlow = _imageQueue.asSharedFlow()
-
-
-    private var interruptThread: Boolean = false
-
-
+    private val imageQueue = LinkedBlockingQueue<ByteArray>(10)
 
     private val stateRequestReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -115,7 +73,7 @@ class ScreenCaptureService : Service() {
 
         startBackgroundThread()
         createNotificationChannel()
-        startKtorServer()
+        startWebServer()
 
         val intentFilter = IntentFilter(ACTION_REQUEST_STATE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -154,48 +112,14 @@ class ScreenCaptureService : Service() {
         return START_NOT_STICKY
     }
 
-
-
-
-
-    private fun startKtorServer() {
-        Log.d(TAG, "Starting Ktor server...")
-        server = WebServer(onConnect = { incoming, outgoing ->
-            handleWebSocketConnection(incoming, outgoing)
-        })
-        server!!.start()
-        Log.d(TAG, "Ktor server started on port $SERVER_PORT")
-    }
-
-
-    private suspend fun handleWebSocketConnection(incoming: ReceiveChannel<Frame>, outgoing: SendChannel<Frame>) {
-
-        coroutineScope {
-            // job 1
-            launch {
-                try {
-                    for (frame in incoming) {
-                        if (frame is Frame.Text) {
-                            // Directly send the heartbeat; send is a suspend function
-                            outgoing.send(Frame.Text(WebServer.HEART_BEAT))
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Handle connection resets or closures gracefully
-                    Log.d(TAG, "exception in job1", e)
-                }
-            }
-
-            // job2
-            launch {
-                try {
-                    frameFlow.collect{
-                        image -> outgoing.send(Frame.Binary(true, image))
-                    }
-                }catch (e: Exception){
-                    Log.d(TAG, "exception in job2", e)
-                }
-            }
+    private fun startWebServer() {
+        Log.d(TAG, "Starting Web server...")
+        server = WebServer(this, SERVER_PORT, imageQueue)
+        try {
+            server!!.start(0, false) // 0 for infinite timeout, false for not as daemon
+            Log.d(TAG, "Web server started on port $SERVER_PORT")
+        } catch (e: IOException) {
+            Log.e(TAG, "Failed to start web server", e)
         }
     }
 
@@ -283,7 +207,11 @@ class ScreenCaptureService : Service() {
 
             ByteArrayOutputStream().use { stream ->
                 finalBitmap?.compress(Bitmap.CompressFormat.JPEG, 80, stream)
-                _imageQueue.tryEmit(stream.toByteArray())
+                if (!imageQueue.offer(stream.toByteArray())) {
+                    // Queue is full, discard oldest frame
+                    imageQueue.poll()
+                    imageQueue.offer(stream.toByteArray())
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to process and compress bitmap", e)
@@ -294,7 +222,6 @@ class ScreenCaptureService : Service() {
 
     private fun stopCapture() {
         Log.d(TAG, "stopCapture called: Releasing media projection resources.")
-        this.interruptThread = true
         backgroundHandler?.post {
             virtualDisplay?.release()
             imageReader?.close()
@@ -348,13 +275,9 @@ class ScreenCaptureService : Service() {
 
         stopForeground(Service.STOP_FOREGROUND_REMOVE)
 
-        // Cancel all coroutines BEFORE stopping the components they might be using.
-        serviceJob.cancel()
-        Log.d(TAG, "Service coroutine scope cancelled.")
-
         server?.stop()
-        Log.d(TAG, "Ktor server stopped.")
-        
+        Log.d(TAG, "Web server stopped.")
+
         stopCapture()
         stopBackgroundThread()
         Log.d(TAG, "Capture and background thread stopped.")
@@ -412,7 +335,7 @@ class ScreenCaptureService : Service() {
 
         const val URL_ADDRESS = "http://9.9.9.9:8080/"
 
-        public const val SCREEN_RATIO = 0.30f
+        const val SCREEN_RATIO = 0.30f
         private const val SERVER_PORT = 8080
 
         @Volatile
