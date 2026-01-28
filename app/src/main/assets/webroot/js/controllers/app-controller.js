@@ -18,6 +18,7 @@ export default class AppController {
         this.touchSocket = null;
         this.touchController = null;
         this.imageQueue = [];
+        this.imageWorker = null;
         this.animationFrameId = null;
         this.connectionState = 'disconnected'; // 'disconnected', 'connecting', 'connected', 'disconnecting'
         this._lastFrameTime = 0;
@@ -58,6 +59,19 @@ export default class AppController {
         if (this.connectionState === state) return;
         this.connectionState = state;
         this.#updateUI();
+    }
+
+    #isSocketOpen(sock) {
+        if (!sock) return false;
+        try {
+            if (typeof sock.readyState !== 'undefined') return sock.readyState === WebSocket.OPEN;
+            if (typeof sock.isConnected !== 'undefined') return !!sock.isConnected;
+            if (typeof sock.isAlive !== 'undefined') return !!sock.isAlive;
+            if (typeof sock.getStatus === 'function') return !!sock.getStatus().isConnected;
+        } catch (e) {
+            return false;
+        }
+        return false;
     }
 
     #updateUI() {
@@ -118,48 +132,138 @@ export default class AppController {
     }
 
     #initImageSocket() {
-        if (this.imageSocket) return;
+        if (this.imageSocket || this.imageWorker) return;
         const url = `ws://${window.location.host}/screen`;
-        this.imageSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 15000, pongTimeout: 15000, msgType: 'arraybuffer' });
 
-        this.imageSocket.onopen = (e) => {
-            console.log('Image WebSocket connection established.', e);
-            if (this.touchSocket && this.touchSocket.readyState === WebSocket.OPEN) {
-                this.#setConnectionState('connected');
+        // Prefer worker to own the WebSocket and decoding
+        try {
+            if (window.Worker) {
+                this.imageWorker = new Worker('/js/controllers/image-worker.js');
+                this.imageWorker.onmessage = (evt) => {
+                    const msg = evt.data;
+                    if (!msg || !msg.type) return;
+                    switch (msg.type) {
+                        case 'open':
+                            console.log('Image WebSocket (worker) opened.');
+                            if (this.#isSocketOpen(this.touchSocket)) {
+                                this.#setConnectionState('connected');
+                            }
+                            break;
+                        case 'bitmap':
+                            if (msg.bitmap) this.#queueBitmap(msg.bitmap);
+                            break;
+                        case 'frame':
+                            if (msg.buffer) this.#queueImage(msg.buffer);
+                            break;
+                        case 'text':
+                            console.log('Image worker:', msg.data);
+                            break;
+                        case 'log':
+                            console.log('Image worker log:', msg.message);
+                            break;
+                        case 'close':
+                            console.log('Image WebSocket (worker) closed.');
+                            this.#setConnectionState('disconnected');
+                            break;
+                        case 'error':
+                            console.warn('Image worker error:', msg.error);
+                            this.#setConnectionState('disconnected');
+                            break;
+                    }
+                };
+                // instruct worker to init its websocket
+                this.imageWorker.postMessage({ type: 'init', url });
+                return;
             }
-        };
-        this.imageSocket.onmessage = (e) => {
-            this.#handleImage(e);
-        };
-        this.imageSocket.onclose = (e) => {
-            console.log('Image WebSocket closed:', e);
-            this.#setConnectionState('disconnected');
+        } catch (err) {
+            console.warn('Failed to initialize image worker, falling back to main-thread websocket.', err);
+            this.imageWorker = null;
         }
-        this.imageSocket.onerror = (e) => {
-            console.log('Image WebSocket error:', e);
-            this.#setConnectionState('disconnected');
-        };
+
+        // Fallback: keep WebSocket in main thread using `WebSocketClient` if available
+        if (window.WebSocketClient) {
+            this.imageSocket = new window.WebSocketClient({
+                url,
+                name: 'imageSocket',
+                heartbeatInterval: 15000,
+                heartbeatTimeout: 15000,
+                binaryType: 'arraybuffer',
+                onOpen: (e) => {
+                    console.log('Image WebSocket connection established.', e);
+                    if (this.#isSocketOpen(this.touchSocket)) {
+                        this.#setConnectionState('connected');
+                    }
+                },
+                onMessage: (data, e) => {
+                    // Wrap to match previous expectations (event-like)
+                    this.#handleImage({ data });
+                },
+                onClose: (e) => {
+                    console.log('Image WebSocket closed:', e);
+                    this.#setConnectionState('disconnected');
+                },
+                onError: (e) => {
+                    console.log('Image WebSocket error:', e);
+                    this.#setConnectionState('disconnected');
+                }
+            });
+        } else {
+            // Last-resort native WebSocket
+            try {
+                this.imageSocket = new WebSocket(url);
+                this.imageSocket.binaryType = 'arraybuffer';
+                this.imageSocket.onopen = (e) => {
+                    console.log('Image WebSocket connection established.', e);
+                    if (this.#isSocketOpen(this.touchSocket)) {
+                        this.#setConnectionState('connected');
+                    }
+                };
+                this.imageSocket.onmessage = (e) => this.#handleImage(e);
+                this.imageSocket.onclose = (e) => { console.log('Image WebSocket closed:', e); this.#setConnectionState('disconnected'); };
+                this.imageSocket.onerror = (e) => { console.log('Image WebSocket error:', e); this.#setConnectionState('disconnected'); };
+            } catch (err) {
+                console.error('Failed to create fallback WebSocket:', err);
+                this.#setConnectionState('disconnected');
+            }
+        }
     }
 
     #initTouchSocket() {
         if (this.touchSocket) return;
         const url = `ws://${window.location.hostname}:8081/touch`;
-        this.touchSocket = new WebsocketHeartbeatJs({ url, pingTimeout: 15000, pongTimeout: 15000 });
-
-        this.touchSocket.onopen = () => {
-            console.log('Touch WebSocket connection established.');
-            if (this.imageSocket && this.imageSocket.readyState === WebSocket.OPEN) {
+        if (window.WebSocketClient) {
+            this.touchSocket = new window.WebSocketClient({
+                url,
+                name: 'touchSocket',
+                heartbeatInterval: 15000,
+                heartbeatTimeout: 25000,
+                onOpen: () => {
+                    console.log('Touch WebSocket connection established.');
+                    if (this.#isSocketOpen(this.imageSocket)) {
                 this.#setConnectionState('connected');
             }
-        };
-        this.touchSocket.onclose = () => this.#setConnectionState('disconnected');
-        this.touchSocket.onerror = (e) => {
-            console.log('Touch WebSocket error:', e);
-            this.#setConnectionState('disconnected');
-        };
-        this.touchSocket.onmessage = (e)=> {
-            console.log("Touch websocket: ", e.data);
-        };
+                },
+                onClose: () => this.#setConnectionState('disconnected'),
+                onError: (e) => { console.log('Touch WebSocket error:', e); this.#setConnectionState('disconnected'); },
+                onMessage: (data) => { console.log('Touch websocket: ', data); }
+            });
+        } else {
+            try {
+                this.touchSocket = new WebSocket(url);
+                this.touchSocket.onopen = () => {
+                    console.log('Touch WebSocket connection established.');
+                    if (this.#isSocketOpen(this.imageSocket)) {
+                        this.#setConnectionState('connected');
+                    }
+                };
+                this.touchSocket.onclose = () => this.#setConnectionState('disconnected');
+                this.touchSocket.onerror = (e) => { console.log('Touch WebSocket error:', e); this.#setConnectionState('disconnected'); };
+                this.touchSocket.onmessage = (e)=> { console.log('Touch websocket: ', e.data); };
+            } catch (err) {
+                console.error('Failed to create touch socket:', err);
+                this.#setConnectionState('disconnected');
+            }
+        }
     }
 
     #closeAllWebSockets() {
@@ -171,24 +275,50 @@ export default class AppController {
             this.touchSocket.close();
             this.touchSocket = null;
         }
+        if (this.imageWorker) {
+            try {
+                this.imageWorker.postMessage({ type: 'close' });
+            } catch (e) { /* ignore */ }
+            try { this.imageWorker.terminate(); } catch (e) { }
+            this.imageWorker = null;
+        }
         this.#setConnectionState('disconnected');
     }
 
     #handleImage(event){
            const dataType = typeof event.data;
            if (dataType === 'string') {
-               console.log("heart beat!", event.data);
+               console.log("image heart beat!", event.data);
            }else {
-              this.#queueImage(event.data);
+               this.#queueImage(event.data);
            }
     }
 
     #queueImage(data) {
         if (this.imageQueue.length > this.frameCount) {
-            this.imageQueue = []; // Drop frames to reduce latency
+            // Drop frames to reduce latency. If any queued bitmaps exist, close them.
+            for (const item of this.imageQueue) {
+                if (item && item.type === 'bitmap' && item.data && typeof item.data.close === 'function') {
+                    try { item.data.close(); } catch (e) { /* ignore */ }
+                }
+            }
+            this.imageQueue = [];
             console.log(" Drop frames to reduce latency");
         }
-        this.imageQueue.push(new Blob([data], { type: "image/jpeg" }));
+        this.imageQueue.push({ type: 'blob', data: new Blob([data], { type: "image/jpeg" }) });
+    }
+
+    #queueBitmap(bitmap) {
+        if (this.imageQueue.length > this.frameCount) {
+            for (const item of this.imageQueue) {
+                if (item && item.type === 'bitmap' && item.data && typeof item.data.close === 'function') {
+                    try { item.data.close(); } catch (e) { }
+                }
+            }
+            this.imageQueue = [];
+            console.log(" Drop frames to reduce latency");
+        }
+        this.imageQueue.push({ type: 'bitmap', data: bitmap });
     }
 
     #startDrawing() {
@@ -216,15 +346,23 @@ export default class AppController {
     }
 
     async #drawImage() {
-        const blob = this.imageQueue.shift();
-        if (!blob) return false;
+        const item = this.imageQueue.shift();
+        if (!item) return false;
 
         try {
-            const imageBitmap = await createImageBitmap(blob);
+            let imageBitmap = null;
+            if (item.type === 'bitmap' && item.data) {
+                imageBitmap = item.data;
+            } else if (item.type === 'blob' && item.data) {
+                imageBitmap = await createImageBitmap(item.data);
+            } else {
+                return false;
+            }
+
             this.streamCanvas.width = imageBitmap.width;
             this.streamCanvas.height = imageBitmap.height;
             this.canvasContext.drawImage(imageBitmap, 0, 0);
-            imageBitmap.close();
+            if (typeof imageBitmap.close === 'function') imageBitmap.close();
 
             // FPS counting
             const now = performance.now();

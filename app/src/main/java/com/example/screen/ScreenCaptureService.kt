@@ -116,7 +116,7 @@ class ScreenCaptureService : Service() {
         Log.d(TAG, "Starting Web server...")
         server = WebServer(this, SERVER_PORT, imageQueue)
         try {
-            server!!.start(0, false) // 0 for infinite timeout, false for not as daemon
+            server!!.start(TIME_OUT, false) // 30 seconds for  timeout, false for not as daemon
             Log.d(TAG, "Web server started on port $SERVER_PORT")
         } catch (e: IOException) {
             Log.e(TAG, "Failed to start web server", e)
@@ -344,5 +344,7 @@ class ScreenCaptureService : Service() {
 
         private const val CHANNEL_ID = "ScreenCaptureChannel"
         private const val NOTIFICATION_ID = 1002
+
+        private const val TIME_OUT = 30 * 1000    // 30 seconds
     }
 }

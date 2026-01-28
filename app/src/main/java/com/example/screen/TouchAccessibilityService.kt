@@ -57,7 +57,7 @@ class TouchAccessibilityService : AccessibilityService() {
         queryScreenWithHeight()
         server = TouchWebServer(TOUCH_SERVER_PORT)
         try {
-            server?.start(0, false)
+            server?.start(TIME_OUT, false)
             Log.d(TAG, "Touch server started on port $TOUCH_SERVER_PORT")
         } catch (e: IOException) {
             Log.e(TAG, "Failed to start touch server", e)
@@ -164,5 +164,7 @@ class TouchAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "TouchAccessibilitySvc"
         private const val TOUCH_SERVER_PORT = 8081
+
+        private const val TIME_OUT = 30 * 1000 // 30 seconds
     }
 }
