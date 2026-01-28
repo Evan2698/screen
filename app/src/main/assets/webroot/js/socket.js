@@ -24,6 +24,7 @@ class WebSocketClient {
         this.binaryType = options.binaryType || 'arraybuffer';
         this.reconnectInterval = options.reconnectInterval || 3000;
         this.maxReconnectAttempts = options.maxReconnectAttempts || 0; // 0 表示无限重连
+        this.alwaysRetry = !!options.alwaysRetry;
         this.heartbeatInterval = options.heartbeatInterval || 15000;
         this.heartbeatTimeout = options.heartbeatTimeout || 10000;
         this.name = options.name || '___';
@@ -62,8 +63,17 @@ class WebSocketClient {
      * 建立 WebSocket 连接
      */
     connect() {
-        if (this.isConnected || this.ws) {
+        if (this.isConnected) {
             return;
+        }
+
+        // Allow reconnect if previous socket is closed or closing; only bail out
+        // when an active socket exists.
+        if (this.ws && typeof this.ws.readyState === 'number') {
+            const rs = this.ws.readyState;
+            if (rs !== WebSocket.CLOSED && rs !== WebSocket.CLOSING) {
+                return; // socket still active
+            }
         }
 
         console.log(`[WebSocket] Connecting: ${this.url}`);
@@ -126,6 +136,9 @@ class WebSocketClient {
             this.isConnected = false;
             this.cleanup();
 
+            // Clear reference to underlying ws so connect() can create a new one
+            try { this.ws = null; } catch (e) { /* ignore */ }
+
             // 调用用户回调
             this.onClose(event);
 
@@ -138,6 +151,10 @@ class WebSocketClient {
         this.ws.onerror = (error) => {
             console.error('[WebSocket] Connection error:', error);
             this.handleError(error);
+            // If connection is not established, schedule a reconnect.
+            if (!this.isManualClose && !this.isConnected) {
+                this.scheduleReconnect();
+            }
         };
     }
 
@@ -365,7 +382,7 @@ class WebSocketClient {
             return;
         }
 
-        if (this.maxReconnectAttempts > 0 && this.reconnectAttempts >= this.maxReconnectAttempts) {
+        if (!this.alwaysRetry && this.maxReconnectAttempts > 0 && this.reconnectAttempts >= this.maxReconnectAttempts) {
             console.error(`[WebSocket] Reached max reconnect attempts (${this.maxReconnectAttempts}), stopping reconnects`);
             return;
         }
