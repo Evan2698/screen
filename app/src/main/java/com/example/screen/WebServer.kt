@@ -6,6 +6,7 @@ import fi.iki.elonen.NanoWSD
 import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.BlockingQueue
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class WebServer(
@@ -13,6 +14,8 @@ class WebServer(
     port: Int,
     private val imageQueue: BlockingQueue<ByteArray>
 ) : NanoWSD(port) {
+
+    private val socketExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     override fun serve(session: IHTTPSession): Response {
         return if (isWebsocketRequested(session)) {
@@ -23,42 +26,50 @@ class WebServer(
     }
 
     private fun serveStaticFiles(uri: String): Response {
-        Log.d(TAG, "Serving static file: $uri")
-        val assetManager = context.assets
-        val finalUri = if (uri == "/") "/index.html" else uri
+        val assetPath = if (uri == "/") "/index.html" else uri
+        Log.d(TAG, "Serving static file: $assetPath")
+
         return try {
-            val inputStream: InputStream = assetManager.open("webroot$finalUri")
-            val mimeType = when {
-                finalUri.endsWith(".html") -> "text/html"
-                finalUri.endsWith(".js") -> "application/javascript"
-                finalUri.endsWith(".css") -> "text/css"
-                finalUri.endsWith(".png") -> "image/png"
-                finalUri.endsWith(".jpeg") -> "image/jpeg"
-                finalUri.endsWith(".svg") -> "image/svg+xml"
-                finalUri.endsWith(".ico") -> "image/x-icon"
-                else -> "application/octet-stream"
-            }
+            val inputStream: InputStream = context.assets.open("webroot$assetPath")
+            val mimeType = mimeTypeFor(assetPath)
             newChunkedResponse(Response.Status.OK, mimeType, inputStream)
         } catch (e: IOException) {
-            Log.e(TAG, "File not found: webroot$finalUri", e)
+            Log.e(TAG, "File not found: webroot$assetPath", e)
             newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not Found")
         }
     }
 
     override fun openWebSocket(session: IHTTPSession): WebSocket {
-        return ScreenWebSocket(session, imageQueue)
+        return ScreenWebSocket(session, imageQueue, socketExecutor)
+    }
+
+    override fun stop() {
+        socketExecutor.shutdownNow()
+        super.stop()
+    }
+
+    private fun mimeTypeFor(path: String): String {
+        return when {
+            path.endsWith(".html") -> "text/html"
+            path.endsWith(".js") -> "application/javascript"
+            path.endsWith(".css") -> "text/css"
+            path.endsWith(".png") -> "image/png"
+            path.endsWith(".jpeg") || path.endsWith(".jpg") -> "image/jpeg"
+            path.endsWith(".svg") -> "image/svg+xml"
+            path.endsWith(".ico") -> "image/x-icon"
+            else -> "application/octet-stream"
+        }
     }
 
     private class ScreenWebSocket(
         session: IHTTPSession,
-        private val imageQueue: BlockingQueue<ByteArray>
+        private val imageQueue: BlockingQueue<ByteArray>,
+        private val socketExecutor: ExecutorService
     ) : WebSocket(session) {
-
-        private val executor = Executors.newSingleThreadExecutor()
 
         override fun onOpen() {
             Log.d(TAG, "WebSocket opened")
-            executor.submit {
+            socketExecutor.submit {
                 try {
                     while (!Thread.currentThread().isInterrupted) {
                         val image = imageQueue.take()
@@ -79,9 +90,6 @@ class WebServer(
             initiatedByRemote: Boolean
         ) {
             Log.d(TAG, "WebSocket closed. Code: $code, Reason: $reason")
-            if (!executor.isShutdown) {
-                executor.shutdownNow()
-            }
         }
 
         override fun onMessage(message: WebSocketFrame) {
@@ -100,9 +108,6 @@ class WebServer(
 
         override fun onException(exception: IOException) {
             Log.e(TAG, "WebSocket exception", exception)
-            if (!executor.isShutdown) {
-                executor.shutdownNow()
-            }
         }
     }
 

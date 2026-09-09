@@ -75,12 +75,16 @@ export default class AppController {
     }
 
     #updateUI() {
+        const isConnected = this.connectionState === 'connected';
+        const isBusy = this.connectionState === 'connecting' || this.connectionState === 'disconnecting';
+
+        this.homeButton.classList.toggle('visible', isConnected);
+        this.backButton.classList.toggle('visible', isConnected);
+
         switch (this.connectionState) {
             case 'disconnected':
                 this.joinButton.textContent = 'Connect';
                 this.joinButton.disabled = false;
-                this.homeButton.style.visibility = 'hidden';
-                this.backButton.style.visibility = 'hidden';
                 break;
             case 'connecting':
                 this.joinButton.textContent = 'Connecting...';
@@ -89,14 +93,15 @@ export default class AppController {
             case 'connected':
                 this.joinButton.textContent = 'Disconnect';
                 this.joinButton.disabled = false;
-                this.homeButton.style.visibility = 'visible';
-                this.backButton.style.visibility = 'visible';
                 break;
             case 'disconnecting':
                 this.joinButton.textContent = 'Disconnecting...';
                 this.joinButton.disabled = true;
                 break;
         }
+
+        this.toggleFpsButton.disabled = !isConnected && !isBusy;
+        this.fullScreenButton.disabled = !isConnected && !isBusy;
     }
 
     #onJoinClick() {

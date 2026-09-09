@@ -43,10 +43,9 @@ class ScreenCaptureService : Service() {
 
     private var handlerThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
-
     private var server: WebServer? = null
-
     private val imageQueue = LinkedBlockingQueue<ByteArray>(10)
+    private var isStopping = false
 
     private val stateRequestReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -60,7 +59,7 @@ class ScreenCaptureService : Service() {
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             Log.d(TAG, "MediaProjection stopped by system, stopping service.")
-            stopSelf()
+            stopServiceSafely()
         }
     }
 
@@ -68,67 +67,112 @@ class ScreenCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service onCreate")
+
         mediaProjectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         startBackgroundThread()
         createNotificationChannel()
         startWebServer()
+        registerStateRequestReceiver()
+    }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "onStartCommand with action: ${intent?.action}")
+
+        when (intent?.action) {
+            ACTION_START -> {
+                isStopping = false
+                handleStartAction(intent)
+            }
+            ACTION_STOP -> stopServiceSafely()
+        }
+
+        return START_NOT_STICKY
+    }
+
+    private fun handleStartAction(intent: Intent) {
+        startForeground(NOTIFICATION_ID, createNotification())
+
+        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
+        @Suppress("DEPRECATION")
+        val data: Intent? = intent.getParcelableExtra(EXTRA_DATA)
+
+        if (resultCode == Activity.RESULT_OK && data != null) {
+            Log.d(TAG, "Permission granted, starting capture")
+            restartWebServer()
+            startCapture(resultCode, data)
+            setRunningState(true)
+            sendStateBroadcast()
+        } else {
+            Log.w(TAG, "Permission denied or data invalid. Code: $resultCode, Data is null: ${data == null}")
+            stopServiceSafely()
+        }
+    }
+
+    private fun registerStateRequestReceiver() {
         val intentFilter = IntentFilter(ACTION_REQUEST_STATE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(stateRequestReceiver, intentFilter, RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(stateRequestReceiver, intentFilter)
         }
-
-        isRunning = true
-        sendStateBroadcast()
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand with action: ${intent?.action}")
-        when (intent?.action) {
-            ACTION_START -> {
-                startForeground(NOTIFICATION_ID, createNotification())
-
-                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
-                @Suppress("DEPRECATION")
-                val data: Intent? = intent.getParcelableExtra(EXTRA_DATA)
-
-                if (resultCode == Activity.RESULT_OK && data != null) {
-                    Log.d(TAG, "Permission granted, starting capture")
-                    startCapture(resultCode, data)
-                } else {
-                    Log.w(TAG, "Permission denied or data invalid. Code: $resultCode, Data is null: ${data == null}")
-                    stopSelf()
-                }
-            }
-            ACTION_STOP -> {
-                Log.d(TAG, "Received stop action")
-                stopSelf()
-            }
-        }
-        return START_NOT_STICKY
     }
 
     private fun startWebServer() {
         Log.d(TAG, "Starting Web server...")
+        if (server != null) {
+            server?.stop()
+            server = null
+        }
         server = WebServer(this, SERVER_PORT, imageQueue)
         try {
-            server!!.start(TIME_OUT, false) // 30 seconds for  timeout, false for not as daemon
+            server?.start(TIME_OUT, false)
             Log.d(TAG, "Web server started on port $SERVER_PORT")
         } catch (e: IOException) {
             Log.e(TAG, "Failed to start web server", e)
         }
     }
 
+    private fun restartWebServer() {
+        server?.stop()
+        server = null
+        startWebServer()
+    }
+
     @Suppress("DEPRECATION")
     private fun startCapture(resultCode: Int, data: Intent) {
         Log.d(TAG, "startCapture called")
+
         mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
         mediaProjection?.registerCallback(mediaProjectionCallback, backgroundHandler)
 
+        val captureSize = calculateCaptureSize()
+        Log.d(TAG, "Screen dimensions: ${captureSize.width} x ${captureSize.height} @ ${captureSize.density} dpi")
+
+        imageReader = ImageReader.newInstance(
+            captureSize.width,
+            captureSize.height,
+            PixelFormat.RGBA_8888,
+            2
+        )
+        imageReader?.setOnImageAvailableListener(this::onImageAvailable, backgroundHandler)
+
+        virtualDisplay = mediaProjection?.createVirtualDisplay(
+            "ScreenCapture",
+            captureSize.width,
+            captureSize.height,
+            captureSize.density,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader?.surface,
+            null,
+            backgroundHandler
+        )
+
+        Log.d(TAG, "VirtualDisplay created")
+    }
+
+    private fun calculateCaptureSize(): CaptureSize {
         val width: Int
         val height: Int
         val density: Int
@@ -146,23 +190,11 @@ class ScreenCaptureService : Service() {
             density = metrics.densityDpi
         }
 
-        val realWidth = (width * SCREEN_RATIO).toInt()
-        val realHeight = (height * SCREEN_RATIO).toInt()
-
-        Log.d(TAG, "Screen dimensions: $realWidth x $realHeight @ $density dpi")
-
-        imageReader = ImageReader.newInstance(realWidth, realHeight, PixelFormat.RGBA_8888, 2)
-        imageReader?.setOnImageAvailableListener(this::onImageAvailable, backgroundHandler)
-
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenCapture",
-            realWidth, realHeight, density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface,
-            null,
-            backgroundHandler
+        return CaptureSize(
+            width = (width * SCREEN_RATIO).toInt(),
+            height = (height * SCREEN_RATIO).toInt(),
+            density = density
         )
-        Log.d(TAG, "VirtualDisplay created")
     }
 
     private fun onImageAvailable(reader: ImageReader) {
@@ -187,19 +219,15 @@ class ScreenCaptureService : Service() {
         var finalBitmap: Bitmap? = null
         try {
             if (rowPadding == 0) {
-                // Fast path: No padding, create one bitmap and copy directly.
                 finalBitmap = createBitmap(width, height, Bitmap.Config.ARGB_8888)
                 finalBitmap.copyPixelsFromBuffer(buffer)
             } else {
-                // Slow path: Padding exists. Create a temporary larger bitmap, then crop.
                 var paddedBitmap: Bitmap? = null
                 try {
                     val paddedWidth = width + rowPadding / pixelStride
                     paddedBitmap = createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
                     paddedBitmap.copyPixelsFromBuffer(buffer)
-                    paddedBitmap.let { // Use a null-safe let to handle the nullable Bitmap
-                        finalBitmap = Bitmap.createBitmap(it, 0, 0, width, height)
-                    }
+                    finalBitmap = Bitmap.createBitmap(paddedBitmap, 0, 0, width, height)
                 } finally {
                     paddedBitmap?.recycle()
                 }
@@ -207,10 +235,10 @@ class ScreenCaptureService : Service() {
 
             ByteArrayOutputStream().use { stream ->
                 finalBitmap?.compress(Bitmap.CompressFormat.JPEG, 80, stream)
-                if (!imageQueue.offer(stream.toByteArray())) {
-                    // Queue is full, discard oldest frame
+                val frame = stream.toByteArray()
+                if (!imageQueue.offer(frame)) {
                     imageQueue.poll()
-                    imageQueue.offer(stream.toByteArray())
+                    imageQueue.offer(frame)
                 }
             }
         } catch (e: Exception) {
@@ -270,18 +298,6 @@ class ScreenCaptureService : Service() {
         super.onDestroy()
         Log.d(TAG, "Service onDestroy: Beginning cleanup of all resources.")
 
-        isRunning = false
-        sendStateBroadcast()
-
-        stopForeground(STOP_FOREGROUND_REMOVE)
-
-        server?.stop()
-        Log.d(TAG, "Web server stopped.")
-
-        stopCapture()
-        stopBackgroundThread()
-        Log.d(TAG, "Capture and background thread stopped.")
-
         try {
             unregisterReceiver(stateRequestReceiver)
             Log.d(TAG, "State request receiver unregistered.")
@@ -289,36 +305,92 @@ class ScreenCaptureService : Service() {
             Log.w(TAG, "State request receiver was not registered or already unregistered.", e)
         }
 
+        if (server != null) {
+            server?.stop()
+            server = null
+        }
+
+        stopCapture()
+        stopBackgroundThread()
+        isStopping = false
         Log.d(TAG, "Service fully destroyed.")
+    }
+
+    private fun stopServiceSafely() {
+        if (isStopping) return
+        isStopping = true
+
+        setRunningState(false)
+        currentServerAddress = null
+        sendStateBroadcast()
+
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        server?.stop()
+        server = null
+        Log.d(TAG, "Web server stopped.")
+
+        stopCapture()
+        stopBackgroundThread()
+        Log.d(TAG, "Capture and background thread stopped.")
+        stopSelf()
+    }
+
+    private fun setRunningState(running: Boolean) {
+        isRunning = running
+        if (!running) {
+            currentServerAddress = null
+        }
     }
 
     private fun sendStateBroadcast() {
         val intent = Intent(ACTION_STATE_CHANGED)
         intent.putExtra(EXTRA_IS_RUNNING, isRunning)
-        if (isRunning) {
-            getLocalIpAddress()?.let {
-                var address = "http://$it:$SERVER_PORT/"
-                if (URL_ADDRESS.startsWith(address)){
-                    address = URL_ADDRESS
-                } else {
-                    address  += " or $URL_ADDRESS"
-                }
-                intent.putExtra(EXTRA_SERVER_ADDRESS, address)
+
+        val address = if (isRunning) {
+            getLocalIpAddress()?.let { localIp ->
+                val resolvedAddress = buildAddress(localIp)
+                resolvedAddress
             }
+        } else {
+            null
         }
+
+        currentServerAddress = address
+        if (address != null) {
+            intent.putExtra(EXTRA_SERVER_ADDRESS, address)
+        }
+
         intent.setPackage(packageName)
         sendBroadcast(intent)
     }
 
+    private fun buildAddress(localIp: String): String {
+        var resolvedAddress = "http://$localIp:$SERVER_PORT/"
+        if (URL_ADDRESS.startsWith(resolvedAddress)) {
+            resolvedAddress = URL_ADDRESS
+        } else {
+            resolvedAddress += " or $URL_ADDRESS"
+        }
+        return resolvedAddress
+    }
+
     private fun getLocalIpAddress(): String? {
         try {
-            return NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
-                .firstOrNull { !it.isLoopbackAddress && it is Inet4Address }?.hostAddress
+            return NetworkInterface.getNetworkInterfaces().toList()
+                .flatMap { it.inetAddresses.toList() }
+                .firstOrNull { !it.isLoopbackAddress && it is Inet4Address }
+                ?.hostAddress
         } catch (ex: Exception) {
             Log.e(TAG, "Error getting IP address", ex)
         }
         return null
     }
+
+    private data class CaptureSize(
+        val width: Int,
+        val height: Int,
+        val density: Int
+    )
 
     companion object {
         private const val TAG = "ScreenCaptureService"
@@ -334,7 +406,6 @@ class ScreenCaptureService : Service() {
         const val EXTRA_DATA = "EXTRA_DATA"
 
         const val URL_ADDRESS = "http://9.9.9.9:8080/"
-
         const val SCREEN_RATIO = 0.30f
         private const val SERVER_PORT = 8080
 
@@ -342,9 +413,12 @@ class ScreenCaptureService : Service() {
         var isRunning = false
             private set
 
+        @Volatile
+        var currentServerAddress: String? = null
+            private set
+
         private const val CHANNEL_ID = "ScreenCaptureChannel"
         private const val NOTIFICATION_ID = 1002
-
-        private const val TIME_OUT = 30 * 1000    // 30 seconds
+        private const val TIME_OUT = 30 * 1000
     }
 }

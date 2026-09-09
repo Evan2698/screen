@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.projection.MediaProjectionManager
-import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -15,18 +14,28 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.ElevatedButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -35,39 +44,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.example.screen.ui.theme.ScreenTheme
-import com.github.xfalcon.vhosts.vservice.VhostsService
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
     private var screenCaptureResultData: Intent? = null
 
-    private val vpnPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            startAllServices(screenCaptureResultData)
-        }
-    }
-
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             screenCaptureResultData = result.data
-            val vpnIntent = VpnService.prepare(this)
-            if (vpnIntent != null) {
-                vpnPermissionLauncher.launch(vpnIntent)
-            } else {
-                startAllServices(screenCaptureResultData)
-            }
+            startAllServices(screenCaptureResultData)
         }
     }
 
@@ -78,7 +77,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             ScreenTheme {
                 var screenCaptureRunning by remember { mutableStateOf(false) }
-                var vpnServiceRunning by remember { mutableStateOf(false) }
                 var isAccessibilityEnabled by remember { mutableStateOf(false) }
                 var serverAddress by remember { mutableStateOf<String?>(null) }
 
@@ -86,26 +84,39 @@ class MainActivity : ComponentActivity() {
                 val lifecycleOwner = LocalLifecycleOwner.current
 
                 DisposableEffect(context, lifecycleOwner) {
+                    val syncScreenState: () -> Unit = {
+                        screenCaptureRunning = ScreenCaptureService.isRunning
+                        serverAddress = if (screenCaptureRunning) {
+                            ScreenCaptureService.currentServerAddress
+                        } else {
+                            null
+                        }
+                    }
+
+                    val refreshAllStates: () -> Unit = {
+                        syncScreenState()
+                        requestServiceState(ScreenCaptureService.ACTION_REQUEST_STATE)
+                        isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
+                    }
+
                     val receiver = object : BroadcastReceiver() {
                         override fun onReceive(context: Context, intent: Intent) {
                             when (intent.action) {
                                 ScreenCaptureService.ACTION_STATE_CHANGED -> {
-                                    screenCaptureRunning = intent.getBooleanExtra(ScreenCaptureService.EXTRA_IS_RUNNING, false)
-                                    serverAddress = if (screenCaptureRunning) {
+                                    val running = intent.getBooleanExtra(ScreenCaptureService.EXTRA_IS_RUNNING, ScreenCaptureService.isRunning)
+                                    screenCaptureRunning = running
+                                    serverAddress = if (running) {
                                         intent.getStringExtra(ScreenCaptureService.EXTRA_SERVER_ADDRESS)
+                                            ?: ScreenCaptureService.currentServerAddress
                                     } else {
                                         null
                                     }
-                                }
-                                VhostsService.ACTION_STATE_CHANGED -> {
-                                    vpnServiceRunning = intent.getBooleanExtra(VhostsService.EXTRA_IS_RUNNING, false)
                                 }
                             }
                         }
                     }
                     val intentFilter = IntentFilter().apply {
                         addAction(ScreenCaptureService.ACTION_STATE_CHANGED)
-                        addAction(VhostsService.ACTION_STATE_CHANGED)
                     }
                     // Since minSdk is 29, which is lower than Tiramisu (33), this check is still valid and necessary.
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -116,10 +127,10 @@ class MainActivity : ComponentActivity() {
                     }
 
                     val observer = LifecycleEventObserver { _, event ->
-                        if (event == Lifecycle.Event.ON_RESUME) {
-                            requestServiceState(ScreenCaptureService.ACTION_REQUEST_STATE)
-                            requestServiceState(VhostsService.ACTION_REQUEST_STATE)
-                            isAccessibilityEnabled = checkAccessibilityServiceEnabled(context)
+                        when (event) {
+                            Lifecycle.Event.ON_START,
+                            Lifecycle.Event.ON_RESUME -> refreshAllStates()
+                            else -> Unit
                         }
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
@@ -131,7 +142,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    val isAnyServiceRunning = screenCaptureRunning || vpnServiceRunning
+                    val isAnyServiceRunning = screenCaptureRunning
                     MainScreen(
                         isAnyServiceRunning = isAnyServiceRunning,
                         isAccessibilityEnabled = isAccessibilityEnabled,
@@ -166,15 +177,10 @@ class MainActivity : ComponentActivity() {
         }
         startForegroundService(screenIntent)
 
-        val vpnIntent = Intent(this, VhostsService::class.java).apply {
-            action = VhostsService.ACTION_START
-        }
-        startForegroundService(vpnIntent)
     }
 
     private fun stopAllServices() {
         startService(Intent(this, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_STOP })
-        startService(Intent(this, VhostsService::class.java).apply { action = VhostsService.ACTION_STOP })
     }
 
     private fun checkAccessibilityServiceEnabled(context: Context): Boolean {
@@ -189,6 +195,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     isAnyServiceRunning: Boolean,
@@ -197,35 +204,191 @@ fun MainScreen(
     onToggleMainServices: () -> Unit,
     onEnableAccessibilityClick: () -> Unit
 ) {
+    val statusColor = if (isAnyServiceRunning) Color(0xFF7AE7A1) else Color(0xFFE8E1F8)
+    val statusLabel = if (isAnyServiceRunning) "Active" else "Standby"
+    val primaryButtonText = if (isAnyServiceRunning) "Stop screen" else "Start screen"
+    val accessibilityLabel = if (isAccessibilityEnabled) "Accessibility enabled" else "Accessibility disabled"
+    val accessibilityButtonText = if (isAccessibilityEnabled) "Open Accessibility settings" else "Enable Accessibility"
+    val heroGradient = Brush.linearGradient(
+        colors = listOf(
+            Color(0xFF7E57FF),
+            Color(0xFF5E67F6),
+            Color(0xFF00B8D9),
+            Color(0xFF4DD0E1)
+        )
+    )
+
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF5F4FB)),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Section 1: Main Services Control
-        Button(onClick = onToggleMainServices) {
-            Text(if (isAnyServiceRunning) "Stop Services" else "Start Services")
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        if (isAnyServiceRunning && serverAddress != null) {
-            Text(text = "Screen running at:")
-            Text(text = serverAddress,  textAlign = TextAlign.Center)
-        } else {
-            Text(text = "All services are stopped.")
-        }
+        CenterAlignedTopAppBar(
+            title = {
+                Text(
+                    text = "Screen Remote",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            },
+            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                containerColor = Color(0xFFF5F4FB),
+                titleContentColor = MaterialTheme.colorScheme.onBackground
+            )
+        )
 
-        Spacer(modifier = Modifier.height(32.dp))
-        Divider(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(heroGradient, RoundedCornerShape(32.dp))
+                    .shadow(22.dp, RoundedCornerShape(32.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "Broadcast",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Color.White.copy(alpha = 0.82f)
+                            )
+                            Text(
+                                text = "Screen capture",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
 
-        // Section 2: Accessibility Service Control
-        if (!isAccessibilityEnabled) {
-            Text(text = "Remote control is disabled.")
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(onClick = onEnableAccessibilityClick) {
-                Text("Enable Remote Control")
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color.White.copy(alpha = 0.14f),
+                            shadowElevation = 0.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(9.dp)
+                                        .clip(CircleShape)
+                                        .background(statusColor)
+                                )
+                                Text(
+                                    text = statusLabel,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = Color.White
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = if (isAnyServiceRunning) "Remote viewing is active and ready." else "Screen sharing is off. Start it when ready.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.White.copy(alpha = 0.9f)
+                    )
+
+                    ElevatedButton(
+                        onClick = onToggleMainServices,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isAnyServiceRunning) Color(0xFFE53935) else Color.White,
+                            contentColor = if (isAnyServiceRunning) Color.White else Color(0xFF5C6DFF)
+                        )
+                    ) {
+                        Text(primaryButtonText, style = MaterialTheme.typography.titleMedium)
+                    }
+                }
             }
-        } else {
-            Text(text = "Remote control is enabled.")
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFFFF)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "投屏地址",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (serverAddress != null) Color(0xFFEAF7FF) else Color(0xFFF3F2F8)
+                    ) {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            text = serverAddress ?: "未启动",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = if (serverAddress != null) Color(0xFF1565C0) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF2ECFF)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Android Accessibility",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = if (isAccessibilityEnabled) Color(0xFFDCFCE7) else Color(0xFFEDE7F8)
+                    ) {
+                        Text(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            text = accessibilityLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (isAccessibilityEnabled) Color(0xFF166534) else Color(0xFF5B3F9B)
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onEnableAccessibilityClick,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF5C6DFF))
+                    ) {
+                        Text(accessibilityButtonText, style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
         }
     }
 }
+
