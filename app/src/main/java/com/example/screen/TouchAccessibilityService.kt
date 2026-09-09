@@ -100,7 +100,22 @@ class TouchAccessibilityService : AccessibilityService() {
             }
 
             override fun onException(exception: IOException) {
-                Log.e(TAG, "Touch WebSocket exception", exception)
+                if (isExpectedSocketClose(exception)) {
+                    Log.d(TAG, "Touch WebSocket closed normally.")
+                } else {
+                    Log.e(TAG, "Touch WebSocket exception", exception)
+                }
+            }
+
+            private fun isExpectedSocketClose(exception: IOException): Boolean {
+                val message = exception.message ?: ""
+                return message.contains("Socket closed", ignoreCase = true)
+                    || message.contains("Software caused connection abort", ignoreCase = true)
+                    || message.contains("Connection reset", ignoreCase = true)
+                    || message.contains("Broken pipe", ignoreCase = true)
+                    || exception is java.net.SocketException && (message.contains("closed", ignoreCase = true)
+                    || message.contains("abort", ignoreCase = true)
+                    || message.contains("reset", ignoreCase = true))
             }
         }
     }

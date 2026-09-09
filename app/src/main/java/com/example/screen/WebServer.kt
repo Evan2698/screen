@@ -79,7 +79,11 @@ class WebServer(
                     Thread.currentThread().interrupt()
                     Log.d(TAG, "WebSocket thread interrupted", e)
                 } catch (e: IOException) {
-                    Log.e(TAG, "Error sending frame, closing connection", e)
+                    if (isExpectedSocketClose(e)) {
+                        Log.d(TAG, "WebSocket closed normally while sending frame.")
+                    } else {
+                        Log.e(TAG, "Error sending frame, closing connection", e)
+                    }
                 }
             }
         }
@@ -107,7 +111,20 @@ class WebServer(
         }
 
         override fun onException(exception: IOException) {
-            Log.e(TAG, "WebSocket exception", exception)
+            if (isExpectedSocketClose(exception)) {
+                Log.d(TAG, "WebSocket closed normally.")
+            } else {
+                Log.e(TAG, "WebSocket exception", exception)
+            }
+        }
+
+        private fun isExpectedSocketClose(exception: IOException): Boolean {
+            val message = exception.message ?: ""
+            return message.contains("Socket closed", ignoreCase = true)
+                || message.contains("Socket is closed", ignoreCase = true)
+                || message.contains("Connection reset", ignoreCase = true)
+                || message.contains("Broken pipe", ignoreCase = true)
+                || exception is java.net.SocketException && (message.contains("closed", ignoreCase = true) || message.contains("reset", ignoreCase = true))
         }
     }
 
