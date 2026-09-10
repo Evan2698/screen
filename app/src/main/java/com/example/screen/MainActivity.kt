@@ -14,6 +14,7 @@ import android.os.Looper
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -184,6 +186,10 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    LaunchedEffect(screenCaptureRunning) {
+                        setScreenKeepOn(screenCaptureRunning)
+                    }
+
                     val isAnyServiceRunning = screenCaptureRunning
                     MainScreen(
                         isAnyServiceRunning = isAnyServiceRunning,
@@ -311,6 +317,19 @@ class MainActivity : ComponentActivity() {
             .edit()
             .putBoolean(PREF_SCREEN_CAPTURE_EXPECTED, expected)
             .apply()
+    }
+
+    private fun setScreenKeepOn(keepOn: Boolean) {
+        if (keepOn) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    override fun onDestroy() {
+        setScreenKeepOn(false)
+        super.onDestroy()
     }
 
     companion object {
