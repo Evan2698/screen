@@ -1,17 +1,7 @@
 :root {
-  --bg: #0b1118;
-  --bg-2: #121a24;
-  --surface: rgba(255, 255, 255, 0.05);
-  --surface-strong: rgba(255, 255, 255, 0.08);
-  --surface-elevated: rgba(20, 27, 35, 0.78);
   --primary: #7c6ef6;
-  --primary-strong: #6357df;
-  --success: #54d788;
-  --success-strong: #2ecb7e;
   --text: #eff3ff;
-  --text-soft: #c8d1ea;
-  --outline: rgba(255, 255, 255, 0.1);
-  --shadow: rgba(0, 0, 0, 0.24);
+  --control-surface: rgba(18, 24, 32, 0.78);
 }
 
 * {
@@ -21,14 +11,11 @@
 html, body {
   margin: 0;
   height: 100%;
-  min-height: 100%;
+  overflow: hidden;
+  background: #070b10;
 }
 
 body {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #070b10;
   color: var(--text);
   font-family: Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -39,30 +26,13 @@ button, img, canvas {
   user-select: none;
 }
 
-.page-shell {
+.screen-stage {
   position: relative;
+  display: grid;
   width: 100vw;
-  height: 100vh;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.toolbar {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 0;
-  margin: 0;
-  opacity: 0.96;
+  height: 100dvh;
+  place-items: center;
+  isolation: isolate;
 }
 
 .button {
@@ -103,30 +73,42 @@ button, img, canvas {
   cursor: not-allowed;
 }
 
-.viewport-panel {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  padding: 0;
+.floating-controls,
+.navigation-controls {
+  position: absolute;
+  z-index: 2;
 }
 
-.screen-frame {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-  max-height: none;
-  min-height: 0;
+.navigation-controls {
+  inset: 0;
+  pointer-events: none;
+}
+
+.navigation-controls .action-button {
+  pointer-events: auto;
+}
+
+.floating-controls {
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #070b10;
-  overflow: hidden;
-  margin: 0;
-  padding: 0;
-  border-radius: 0;
-  border: 0;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: var(--control-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  transform: translate(-50%, -4px);
+  opacity: 0.22;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  backdrop-filter: blur(14px);
+}
+
+.screen-stage:hover .floating-controls,
+.screen-stage:focus-within .floating-controls,
+.floating-controls:hover {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .action-button {
@@ -138,7 +120,7 @@ button, img, canvas {
   height: 96px;
   border: 1px solid rgba(255,255,255,0.04);
   border-radius: 22px;
-  background: rgba(17, 22, 29, 0.55);
+  background: rgba(17, 22, 29, 0.62);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -172,13 +154,26 @@ button, img, canvas {
 }
 
 #screen {
+  grid-area: 1 / 1;
   display: block;
-  width: 100%;
-  height: 100%;
-  max-height: none;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
   background: #070b10;
   object-fit: contain;
-  margin: 0;
-  padding: 0;
-  border: 0;
+  touch-action: none;
+}
+
+@media (max-width: 480px) {
+  .floating-controls {
+    gap: 4px;
+    padding: 4px;
+  }
+
+  .button {
+    min-width: 0;
+    padding: 6px 10px;
+    font-size: 0.7rem;
+  }
 }

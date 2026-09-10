@@ -13,27 +13,24 @@
 </head>
 
 <body>
-    <div class="page-shell">
-        <div class="toolbar" aria-label="Screen controls">
+    <main class="screen-stage" aria-live="polite">
+        <canvas id="screen" aria-label="Screen content"></canvas>
+
+        <nav class="floating-controls" aria-label="Screen controls">
             <button id="join" class="button primary">Connect</button>
             <button id="fullscreen" class="button secondary">Full</button>
             <button id="toggle-fps" class="button ghost">FPS</button>
+        </nav>
+
+        <div class="navigation-controls" aria-label="Device navigation">
+            <button class="action-button left" id="home" aria-label="Home key">
+                <img src="img/home.svg" alt="Home" />
+            </button>
+            <button class="action-button right" id="back" aria-label="Back key">
+                <img src="img/back.svg" alt="Back" />
+            </button>
         </div>
-
-        <div class="viewport-panel" aria-live="polite">
-            <div class="screen-frame">
-                <button class="action-button left" id="home" aria-label="Home key">
-                    <img src="img/home.svg" alt="Home" />
-                </button>
-
-                <canvas id="screen" aria-label="Screen content"></canvas>
-
-                <button class="action-button right" id="back" aria-label="Back key">
-                    <img src="img/back.svg" alt="Back" />
-                </button>
-            </div>
-        </div>
-    </div>
+    </main>
 
     <script src="js/socket.js"></script>
     <script type="module" src="js/main.js"></script>

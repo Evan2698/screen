@@ -44,10 +44,17 @@ export default class AppController {
             this.toggleFpsButton.addEventListener('click', () => {
                 this.showFps = !this.showFps;
                 this.toggleFpsButton.textContent = this.showFps ? 'FPS: On' : 'FPS: Off';
+                this.#updateFullScreenButtonState();
             });
             this.toggleFpsButton.textContent = this.showFps ? 'FPS: On' : 'FPS: Off';
         }
+        document.addEventListener('fullscreenchange', () => this.#updateFullScreenButtonState());
         window.onbeforeunload = this.#destroy.bind(this);
+    }
+
+    #updateFullScreenButtonState() {
+        const isFullscreen = !!document.fullscreenElement;
+        this.fullScreenButton.textContent = isFullscreen ? 'Exit Full' : 'Full';
     }
 
     #destroy() {
@@ -131,9 +138,24 @@ export default class AppController {
     }
 
     #onFullScreenClick() {
-        if (this.streamCanvas.requestFullscreen) {
-            this.streamCanvas.requestFullscreen();
+        const target = document.documentElement || document.body || this.streamCanvas;
+        if (document.fullscreenElement) {
+            if (document.exitFullscreen) {
+                document.exitFullscreen().catch(() => {});
+            }
+            return;
         }
+
+        const requestFullscreen = target.requestFullscreen?.bind(target)
+            || this.streamCanvas.requestFullscreen?.bind(this.streamCanvas)
+            || document.body?.requestFullscreen?.bind(document.body);
+
+        if (requestFullscreen) {
+            requestFullscreen().catch(() => {
+                console.warn('Fullscreen request rejected by the browser.');
+            });
+        }
+        this.#updateFullScreenButtonState();
     }
 
     #initImageSocket() {

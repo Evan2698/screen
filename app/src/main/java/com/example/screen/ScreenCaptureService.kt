@@ -58,8 +58,19 @@ class ScreenCaptureService : Service() {
 
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
-            Log.d(TAG, "MediaProjection stopped by system, stopping service.")
-            stopServiceSafely()
+
+            stopCapture(stopProjection = false)
+
+            if (isStopping) {
+                Log.d(TAG, "MediaProjection stopped during intentional shutdown; ignoring recovery.")
+                return
+            }
+
+            Log.w(TAG, "MediaProjection stopped by system. Releasing stale capture session and requiring fresh permission on restart.")
+            imageQueue.clear()
+            setRunningState(false)
+            sendStateBroadcast()
+
         }
     }
 
@@ -101,15 +112,19 @@ class ScreenCaptureService : Service() {
         if (resultCode == Activity.RESULT_OK && data != null) {
             Log.d(TAG, "Permission granted, starting capture")
             restartWebServer()
-            startCapture(resultCode, data)
-            setRunningState(true)
-            sendStateBroadcast()
+            if (startCapture(resultCode, data)) {
+                setRunningState(true)
+                sendStateBroadcast()
+            } else {
+                stopServiceSafely()
+            }
         } else {
             Log.w(TAG, "Permission denied or data invalid. Code: $resultCode, Data is null: ${data == null}")
             stopServiceSafely()
         }
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private fun registerStateRequestReceiver() {
         val intentFilter = IntentFilter(ACTION_REQUEST_STATE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -141,35 +156,55 @@ class ScreenCaptureService : Service() {
     }
 
     @Suppress("DEPRECATION")
-    private fun startCapture(resultCode: Int, data: Intent) {
+    @Synchronized
+    private fun startCapture(resultCode: Int, data: Intent): Boolean {
+        if (mediaProjection != null || virtualDisplay != null || imageReader != null) {
+            Log.w(TAG, "Capture session is already active; ignoring duplicate start request.")
+            return true
+        }
+
         Log.d(TAG, "startCapture called")
 
-        mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
-        mediaProjection?.registerCallback(mediaProjectionCallback, backgroundHandler)
+        return try {
+            val projection = mediaProjectionManager.getMediaProjection(resultCode, data)
+                ?: throw IllegalStateException("MediaProjectionManager returned null projection")
+            mediaProjection = projection
+            projection.registerCallback(mediaProjectionCallback, backgroundHandler)
 
-        val captureSize = calculateCaptureSize()
-        Log.d(TAG, "Screen dimensions: ${captureSize.width} x ${captureSize.height} @ ${captureSize.density} dpi")
+            val captureSize = calculateCaptureSize()
+            Log.d(TAG, "Screen dimensions: ${captureSize.width} x ${captureSize.height} @ ${captureSize.density} dpi")
 
-        imageReader = ImageReader.newInstance(
-            captureSize.width,
-            captureSize.height,
-            PixelFormat.RGBA_8888,
-            2
-        )
-        imageReader?.setOnImageAvailableListener(this::onImageAvailable, backgroundHandler)
+            val reader = ImageReader.newInstance(
+                captureSize.width,
+                captureSize.height,
+                PixelFormat.RGBA_8888,
+                2
+            )
+            imageReader = reader
+            reader.setOnImageAvailableListener(this::onImageAvailable, backgroundHandler)
 
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenCapture",
-            captureSize.width,
-            captureSize.height,
-            captureSize.density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface,
-            null,
-            backgroundHandler
-        )
+            virtualDisplay = projection.createVirtualDisplay(
+                "ScreenCapture",
+                captureSize.width,
+                captureSize.height,
+                captureSize.density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader.surface,
+                null,
+                backgroundHandler
+            )
 
-        Log.d(TAG, "VirtualDisplay created")
+            Log.d(TAG, "VirtualDisplay created")
+            true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Screen capture permission is no longer valid; requesting fresh permission is required.", e)
+            stopCapture()
+            false
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Failed to create screen capture session.", e)
+            stopCapture()
+            false
+        }
     }
 
     private fun calculateCaptureSize(): CaptureSize {
@@ -248,13 +283,15 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    private fun stopCapture() {
-        Log.d(TAG, "stopCapture called: Releasing media projection resources.")
+    private fun stopCapture(stopProjection: Boolean = true) {
+        Log.d(TAG, "stopCapture called: Releasing media projection resources. stopProjection=$stopProjection")
         backgroundHandler?.post {
             virtualDisplay?.release()
             imageReader?.close()
             mediaProjection?.unregisterCallback(mediaProjectionCallback)
-            mediaProjection?.stop()
+            if (stopProjection) {
+                mediaProjection?.stop()
+            }
 
             virtualDisplay = null
             imageReader = null

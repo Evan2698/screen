@@ -170,16 +170,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startAllServices(screenCaptureData: Intent?) {
+        if (screenCaptureData == null) {
+            Log.w("MainActivity", "No screen capture permission data, requesting fresh projection permission.")
+            screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+            return
+        }
+
         val screenIntent = Intent(this, ScreenCaptureService::class.java).apply {
             action = ScreenCaptureService.ACTION_START
             putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, Activity.RESULT_OK)
             putExtra(ScreenCaptureService.EXTRA_DATA, screenCaptureData)
         }
         startForegroundService(screenIntent)
-
     }
 
     private fun stopAllServices() {
+        screenCaptureResultData = null
         startService(Intent(this, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_STOP })
     }
 
