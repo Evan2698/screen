@@ -8,6 +8,8 @@ import java.io.InputStream
 import java.util.concurrent.BlockingQueue
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 
 class WebServer(
     private val context: Context,
@@ -67,23 +69,34 @@ class WebServer(
         private val socketExecutor: ExecutorService
     ) : WebSocket(session) {
 
+        @Volatile
+        private var closed = false
+        @Volatile
+        private var senderTask: Future<*>? = null
+
         override fun onOpen() {
             Log.d(TAG, "WebSocket opened")
-            socketExecutor.submit {
+            imageQueue.clear()
+            senderTask = socketExecutor.submit {
                 try {
-                    while (!Thread.currentThread().isInterrupted) {
-                        val image = imageQueue.take()
+                    while (!closed && !Thread.currentThread().isInterrupted) {
+                        val image = imageQueue.poll(FRAME_POLL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                            ?: continue
                         send(image)
                     }
                 } catch (e: InterruptedException) {
                     Thread.currentThread().interrupt()
-                    Log.d(TAG, "WebSocket thread interrupted", e)
+                    if (!closed) {
+                        Log.d(TAG, "WebSocket sender thread interrupted.")
+                    }
                 } catch (e: IOException) {
                     if (isExpectedSocketClose(e)) {
                         Log.d(TAG, "WebSocket closed normally while sending frame.")
                     } else {
                         Log.e(TAG, "Error sending frame, closing connection", e)
                     }
+                } finally {
+                    senderTask = null
                 }
             }
         }
@@ -93,6 +106,7 @@ class WebServer(
             reason: String?,
             initiatedByRemote: Boolean
         ) {
+            closeSender()
             Log.d(TAG, "WebSocket closed. Code: $code, Reason: $reason")
         }
 
@@ -115,11 +129,18 @@ class WebServer(
         }
 
         override fun onException(exception: IOException) {
+            closeSender()
             if (isExpectedSocketClose(exception)) {
                 Log.d(TAG, "WebSocket closed normally.")
             } else {
                 Log.e(TAG, "WebSocket exception", exception)
             }
+        }
+
+        private fun closeSender() {
+            closed = true
+            senderTask?.cancel(true)
+            senderTask = null
         }
 
         private fun isExpectedSocketClose(exception: IOException): Boolean {
@@ -139,6 +160,7 @@ class WebServer(
 
     companion object {
         private const val TAG = "WebServer"
+        private const val FRAME_POLL_TIMEOUT_MS = 500L
         const val HEART_BEAT = "heartbeat"
     }
 }

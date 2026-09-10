@@ -22,6 +22,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
@@ -31,7 +32,9 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 class ScreenCaptureService : Service() {
 
@@ -44,7 +47,7 @@ class ScreenCaptureService : Service() {
     private var handlerThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
     private var server: WebServer? = null
-    private val imageQueue = LinkedBlockingQueue<ByteArray>(10)
+    private val imageQueue = LinkedBlockingQueue<ByteArray>(2)
     private var isStopping = false
 
     private val stateRequestReceiver = object : BroadcastReceiver() {
@@ -58,9 +61,6 @@ class ScreenCaptureService : Service() {
 
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
-
-            stopCapture(stopProjection = false)
-
             if (isStopping) {
                 Log.d(TAG, "MediaProjection stopped during intentional shutdown; ignoring recovery.")
                 return
@@ -70,7 +70,7 @@ class ScreenCaptureService : Service() {
             imageQueue.clear()
             setRunningState(false)
             sendStateBroadcast()
-
+            stopCapture(stopProjection = false)
         }
     }
 
@@ -285,7 +285,7 @@ class ScreenCaptureService : Service() {
 
     private fun stopCapture(stopProjection: Boolean = true) {
         Log.d(TAG, "stopCapture called: Releasing media projection resources. stopProjection=$stopProjection")
-        backgroundHandler?.post {
+        val release = {
             virtualDisplay?.release()
             imageReader?.close()
             mediaProjection?.unregisterCallback(mediaProjectionCallback)
@@ -297,6 +297,27 @@ class ScreenCaptureService : Service() {
             imageReader = null
             mediaProjection = null
             Log.d(TAG, "Capture resources released on background thread.")
+        }
+
+        val handler = backgroundHandler
+        if (handler == null || Looper.myLooper() == handler.looper) {
+            release()
+            return
+        }
+
+        val released = CountDownLatch(1)
+        if (!handler.post {
+                try {
+                    release()
+                } finally {
+                    released.countDown()
+                }
+            }) {
+            release()
+            return
+        }
+        if (!released.await(CAPTURE_RELEASE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            Log.w(TAG, "Timed out while releasing capture resources.")
         }
     }
 
@@ -347,6 +368,7 @@ class ScreenCaptureService : Service() {
             server = null
         }
 
+        imageQueue.clear()
         stopCapture()
         stopBackgroundThread()
         isStopping = false
@@ -366,6 +388,7 @@ class ScreenCaptureService : Service() {
         server = null
         Log.d(TAG, "Web server stopped.")
 
+        imageQueue.clear()
         stopCapture()
         stopBackgroundThread()
         Log.d(TAG, "Capture and background thread stopped.")
@@ -457,5 +480,6 @@ class ScreenCaptureService : Service() {
         private const val CHANNEL_ID = "ScreenCaptureChannel"
         private const val NOTIFICATION_ID = 1002
         private const val TIME_OUT = 30 * 1000
+        private const val CAPTURE_RELEASE_TIMEOUT_MS = 1_000L
     }
 }

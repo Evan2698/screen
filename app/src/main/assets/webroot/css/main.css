@@ -39,11 +39,11 @@ button, img, canvas {
   appearance: none;
   border: 1px solid rgba(255,255,255,0.07);
   border-radius: 999px;
-  padding: 6px 14px;
-  min-width: 72px;
+  padding: 9px 17px;
+  min-width: 84px;
   cursor: pointer;
   font-weight: 700;
-  font-size: 0.74rem;
+  font-size: 0.82rem;
   letter-spacing: 0.02em;
   color: var(--text);
   background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
@@ -89,11 +89,11 @@ button, img, canvas {
 }
 
 .floating-controls {
-  top: max(12px, env(safe-area-inset-top));
+  top: max(4px, env(safe-area-inset-top));
   left: 50%;
   display: flex;
-  gap: 8px;
-  padding: 6px;
+  gap: 10px;
+  padding: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 999px;
   background: var(--control-surface);
@@ -167,13 +167,13 @@ button, img, canvas {
 
 @media (max-width: 480px) {
   .floating-controls {
-    gap: 4px;
-    padding: 4px;
+    gap: 6px;
+    padding: 6px;
   }
 
   .button {
     min-width: 0;
-    padding: 6px 10px;
-    font-size: 0.7rem;
+    padding: 8px 12px;
+    font-size: 0.76rem;
   }
 }

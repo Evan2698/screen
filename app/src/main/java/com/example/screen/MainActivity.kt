@@ -6,14 +6,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.projection.MediaProjectionManager
+import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,19 +64,49 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
     private var screenCaptureResultData: Intent? = null
+    private var screenCaptureExpected = false
+    private var screenCapturePermissionRequestActive = false
+    private var screenCaptureRecoveryPending = false
+    private var screenCaptureRecoveryScheduled = false
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        screenCapturePermissionRequestActive = false
         if (result.resultCode == Activity.RESULT_OK) {
             screenCaptureResultData = result.data
+            screenCaptureExpected = true
+            screenCaptureRecoveryPending = false
+            saveScreenCaptureExpected(true)
             startAllServices(screenCaptureResultData)
+        } else {
+            Log.w(TAG, "Screen capture permission was denied.")
+            screenCaptureExpected = false
+            screenCaptureRecoveryPending = false
+            saveScreenCaptureExpected(false)
+        }
+    }
+
+    private val vpnPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            startVpnService()
+        } else {
+            Log.w(TAG, "VPN permission was denied; stopping screen capture.")
+            screenCaptureExpected = false
+            screenCaptureRecoveryPending = false
+            saveScreenCaptureExpected(false)
+            stopScreenCaptureService()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureExpected = getPreferences(Context.MODE_PRIVATE)
+            .getBoolean(PREF_SCREEN_CAPTURE_EXPECTED, false)
 
         setContent {
             ScreenTheme {
@@ -111,6 +145,11 @@ class MainActivity : ComponentActivity() {
                                     } else {
                                         null
                                     }
+                                    if (!running && screenCaptureExpected) {
+                                        screenCaptureRecoveryPending = true
+                                        stopVpnService()
+                                        scheduleScreenCaptureRecovery()
+                                    }
                                 }
                             }
                         }
@@ -129,7 +168,10 @@ class MainActivity : ComponentActivity() {
                     val observer = LifecycleEventObserver { _, event ->
                         when (event) {
                             Lifecycle.Event.ON_START,
-                            Lifecycle.Event.ON_RESUME -> refreshAllStates()
+                            Lifecycle.Event.ON_RESUME -> {
+                                refreshAllStates()
+                                requestScreenCaptureRecoveryIfNeeded()
+                            }
                             else -> Unit
                         }
                     }
@@ -151,7 +193,7 @@ class MainActivity : ComponentActivity() {
                             if (isAnyServiceRunning) {
                                 stopAllServices()
                             } else {
-                                screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+                                requestScreenCapturePermission()
                             }
                         },
                         onEnableAccessibilityClick = {
@@ -171,7 +213,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startAllServices(screenCaptureData: Intent?) {
         if (screenCaptureData == null) {
-            Log.w("MainActivity", "No screen capture permission data, requesting fresh projection permission.")
+            Log.w(TAG, "No screen capture permission data, requesting fresh projection permission.")
             screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
             return
         }
@@ -182,11 +224,75 @@ class MainActivity : ComponentActivity() {
             putExtra(ScreenCaptureService.EXTRA_DATA, screenCaptureData)
         }
         startForegroundService(screenIntent)
+        startOrRequestVpn()
+    }
+
+    private fun requestScreenCapturePermission() {
+        if (screenCapturePermissionRequestActive) return
+        screenCapturePermissionRequestActive = true
+        screenCaptureExpected = true
+        screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+    }
+
+    private fun requestScreenCaptureRecoveryIfNeeded() {
+        if (screenCaptureExpected
+            && screenCaptureRecoveryPending
+            && !ScreenCaptureService.isRunning
+            && !screenCapturePermissionRequestActive
+            && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        ) {
+            Log.i(TAG, "Screen capture stopped while the device was locked; requesting fresh permission.")
+            requestScreenCapturePermission()
+        }
+    }
+
+    private fun scheduleScreenCaptureRecovery() {
+        if (screenCaptureRecoveryScheduled) return
+        screenCaptureRecoveryScheduled = true
+        mainHandler.postDelayed({
+            screenCaptureRecoveryScheduled = false
+            requestScreenCaptureRecoveryIfNeeded()
+        }, RECOVERY_DELAY_MS)
     }
 
     private fun stopAllServices() {
+        screenCaptureExpected = false
+        screenCapturePermissionRequestActive = false
+        screenCaptureRecoveryPending = false
+        screenCaptureRecoveryScheduled = false
+        mainHandler.removeCallbacksAndMessages(null)
+        saveScreenCaptureExpected(false)
         screenCaptureResultData = null
-        startService(Intent(this, ScreenCaptureService::class.java).apply { action = ScreenCaptureService.ACTION_STOP })
+        stopVpnService()
+        stopScreenCaptureService()
+    }
+
+    private fun startOrRequestVpn() {
+        val vpnIntent = VpnService.prepare(this)
+        if (vpnIntent == null) {
+            startVpnService()
+        } else {
+            vpnPermissionLauncher.launch(vpnIntent)
+        }
+    }
+
+    private fun startVpnService() {
+        val intent = Intent(this, com.github.xfalcon.vhosts.vservice.VhostsService::class.java).apply {
+            action = com.github.xfalcon.vhosts.vservice.VhostsService.ACTION_START
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
+
+    private fun stopVpnService() {
+        startService(Intent(this, com.github.xfalcon.vhosts.vservice.VhostsService::class.java).apply {
+            action = com.github.xfalcon.vhosts.vservice.VhostsService.ACTION_STOP
+        })
+    }
+
+    private fun stopScreenCaptureService() {
+        startService(Intent(this, ScreenCaptureService::class.java).apply {
+            action = ScreenCaptureService.ACTION_STOP
+        })
     }
 
     private fun checkAccessibilityServiceEnabled(context: Context): Boolean {
@@ -198,6 +304,19 @@ class MainActivity : ComponentActivity() {
             Log.d("TAG", e.toString())
             return false
         }
+    }
+
+    private fun saveScreenCaptureExpected(expected: Boolean) {
+        getPreferences(Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(PREF_SCREEN_CAPTURE_EXPECTED, expected)
+            .apply()
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val PREF_SCREEN_CAPTURE_EXPECTED = "screen_capture_expected"
+        private const val RECOVERY_DELAY_MS = 500L
     }
 }
 
@@ -397,4 +516,3 @@ fun MainScreen(
         }
     }
 }
-
